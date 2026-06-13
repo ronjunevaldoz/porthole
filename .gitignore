@@ -1,0 +1,13 @@
+# Never commit real credentials
+.env
+local/.env
+vps/.env
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp

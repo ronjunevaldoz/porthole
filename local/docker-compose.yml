@@ -1,0 +1,61 @@
+version: "3.8"
+
+# ── Local / Home PC side ──────────────────────────────────────────────────────
+# Runs Ollama (your LLM engine) + frpc (the tunnel client).
+# frpc punches a hole from your home to the VPS so remote clients can call
+# http://<VPS_IP>:11434 and reach your local Ollama.
+#
+# Before starting:
+#   1. cp .env.example .env
+#   2. Set VPS_HOST and FRP_TOKEN in .env
+#   3. Edit frpc.ini and replace {{ VPS_HOST }} / {{ FRP_TOKEN }} with real values
+#      (or use sed: see README.md)
+#   4. docker compose up -d
+
+services:
+
+  # ── Ollama ─────────────────────────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      # Persist downloaded models between restarts
+      - ollama_data:/root/.ollama
+    ports:
+      # Expose locally for dev/testing; frpc tunnels this to the VPS
+      - "11434:11434"
+    # Uncomment the section below if you have an NVIDIA GPU:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:11434/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ── frpc (tunnel client) ───────────────────────────────────────────────────
+  # frpc.ini is AUTO-GENERATED — edit services.conf and run ./setup.sh
+  frpc:
+    image: snowdreamtech/frpc:0.51.3
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ./frpc.ini:/etc/frp/frpc.ini:ro
+    extra_hosts:
+      # lets frpc reach processes running directly on your machine (non-docker)
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env
+    command: frpc -c /etc/frp/frpc.ini
+
+volumes:
+  ollama_data:
