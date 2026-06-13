@@ -3,6 +3,10 @@
 local/.env
 vps/.env
 
+# Auto-generated — contains real token and VPS IP
+local/frpc.ini
+vps/docker-compose.yml
+
 # OS noise
 .DS_Store
 Thumbs.db
