@@ -93,12 +93,30 @@ for i in "${!NAMES[@]}"; do
     "${NAMES[$i]}" "${LHOSTS[$i]}:${LPORTS[$i]}" "${RPORTS[$i]}"
 done
 
+# ── 3. Sync DigitalOcean firewall (if doctl is available) ────────────────────
+if command -v doctl &>/dev/null && doctl account get &>/dev/null 2>&1; then
+  FW_ID=$(doctl compute firewall list --format ID,Name --no-header 2>/dev/null | grep porthole-fw | awk '{print $1}')
+  if [[ -n "$FW_ID" ]]; then
+    # Always keep SSH + frp control + dashboard, then add all service ports
+    RULES="protocol:tcp,ports:22,address:0.0.0.0/0,address:::/0"
+    RULES="$RULES protocol:tcp,ports:7000,address:0.0.0.0/0,address:::/0"
+    RULES="$RULES protocol:tcp,ports:7500,address:0.0.0.0/0,address:::/0"
+    for i in "${!RPORTS[@]}"; do
+      RULES="$RULES protocol:tcp,ports:${RPORTS[$i]},address:0.0.0.0/0,address:::/0"
+    done
+    doctl compute firewall update "$FW_ID" \
+      --name porthole-fw \
+      --inbound-rules  "$RULES" \
+      --outbound-rules "protocol:tcp,ports:all,address:0.0.0.0/0,address:::/0 protocol:udp,ports:all,address:0.0.0.0/0,address:::/0" \
+      > /dev/null
+    echo "✓  firewall synced (ports: 22, 7000, 7500$(printf ', %s' "${RPORTS[@]}"))"
+  else
+    echo "⚠  doctl found but no 'porthole-fw' firewall — skipping firewall sync"
+  fi
+fi
+
 echo ""
 echo "Next steps:"
 echo "  1. Reload local frpc:    docker compose -f local/docker-compose.yml up -d --force-recreate frpc"
 echo "  2. Push & reload VPS:    scp -r vps/ root@\$VPS_HOST:~/proxy/ && \\"
 echo "                           ssh root@\$VPS_HOST 'cd ~/proxy/vps && docker compose up -d'"
-echo "  3. Open firewall ports on VPS for:"
-for i in "${!NAMES[@]}"; do
-  printf '       %s  (%s)\n' "${RPORTS[$i]}" "${NAMES[$i]}"
-done
