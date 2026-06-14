@@ -3,20 +3,26 @@
 porthole - manage FRP tunnel services
 
 Usage:
-  python porthole.py config                   # show current config
-  python porthole.py config --vps IP          # set VPS host
-  python porthole.py config --token TOKEN     # set FRP token (both .env files)
-  python porthole.py config --dashboard PWD   # set dashboard password
-  python porthole.py config --rotate-token    # generate a new token automatically
-  python porthole.py list
-  python porthole.py add <name> <local_port> <remote_port> [--docker <container>]
-  python porthole.py remove <name>
-  python porthole.py sync
-  python porthole.py status
+  python porthole.py config                        # show current config
+  python porthole.py config --vps IP               # set VPS host
+  python porthole.py config --token TOKEN          # set FRP token
+  python porthole.py config --dashboard PWD        # set dashboard password
+  python porthole.py config --domain DOMAIN        # set domain for HTTPS
+  python porthole.py config --email EMAIL          # set email for Let's Encrypt
+  python porthole.py config --rotate-token         # generate a new token automatically
+
+  python porthole.py list                          # list services
+  python porthole.py add <name> <lport> <rport>   # add service and sync
+  python porthole.py remove <name>                 # remove service and sync
+  python porthole.py sync                          # sync everything to VPS
+  python porthole.py status                        # check tunnel health
+
+  python porthole.py secure setup                  # install Nginx + SSL on VPS
+  python porthole.py secure status                 # check HTTPS + cert expiry
+  python porthole.py secure renew                  # force cert renewal
 """
 
 import argparse
-import os
 import secrets
 import socket
 import subprocess
@@ -24,7 +30,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-ROOT = Path(__file__).parent
+ROOT          = Path(__file__).parent
 SERVICES_CONF = ROOT / "services.conf"
 LOCAL_ENV     = ROOT / "local" / ".env"
 VPS_ENV       = ROOT / "vps"   / ".env"
@@ -32,8 +38,8 @@ FRPC_INI      = ROOT / "local" / "frpc.ini"
 VPS_COMPOSE   = ROOT / "vps"   / "docker-compose.yml"
 SSH_KEY       = Path.home() / ".ssh" / "porthole_do"
 
-# ── Colours (no deps) ─────────────────────────────────────────────────────────
-def _c(code, text): return f"\033[{code}m{text}\033[0m" if sys.stdout.isatty() else text
+# ── Colours ───────────────────────────────────────────────────────────────────
+def _c(code, t): return f"\033[{code}m{t}\033[0m" if sys.stdout.isatty() else t
 green  = lambda t: _c("32", t)
 red    = lambda t: _c("31", t)
 yellow = lambda t: _c("33", t)
@@ -59,39 +65,38 @@ def load_env(path: Path) -> dict:
     return env
 
 def save_env(path: Path, updates: dict):
-    """Update or add keys in a .env file, creating it if needed."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    lines   = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
     written = set()
-    new_lines = []
+    out     = []
     for line in lines:
-        stripped = line.strip()
-        if stripped and not stripped.startswith("#") and "=" in stripped:
-            k = stripped.split("=", 1)[0].strip()
+        s = line.strip()
+        if s and not s.startswith("#") and "=" in s:
+            k = s.split("=", 1)[0].strip()
             if k in updates:
-                new_lines.append(f"{k}={updates[k]}")
+                out.append(f"{k}={updates[k]}")
                 written.add(k)
                 continue
-        new_lines.append(line)
+        out.append(line)
     for k, v in updates.items():
         if k not in written:
-            new_lines.append(f"{k}={v}")
-    path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+            out.append(f"{k}={v}")
+    path.write_text("\n".join(out) + "\n", encoding="utf-8")
 
 def load_services() -> list:
     services = []
     for line in SERVICES_CONF.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
+        s = line.strip()
+        if not s or s.startswith("#"):
             continue
-        parts = [p.strip() for p in stripped.split(":")]
+        parts = [p.strip() for p in s.split(":")]
         if len(parts) < 3 or not parts[1].isdigit() or not parts[2].isdigit():
             continue
         services.append(Service(
-            name       = parts[0],
-            local_port = int(parts[1]),
-            remote_port= int(parts[2]),
-            local_host = parts[3] if len(parts) > 3 else "",
+            name        = parts[0],
+            local_port  = int(parts[1]),
+            remote_port = int(parts[2]),
+            local_host  = parts[3] if len(parts) > 3 else "",
         ))
     return services
 
@@ -99,8 +104,7 @@ def load_services() -> list:
 def gen_frpc_ini(services, vps_host, frp_token) -> str:
     lines = [
         "# AUTO-GENERATED by porthole.py — run: python porthole.py sync",
-        "",
-        "[common]",
+        "", "[common]",
         f"server_addr = {vps_host}",
         "server_port = 7000",
         f"token       = {frp_token}",
@@ -115,10 +119,7 @@ def gen_frpc_ini(services, vps_host, frp_token) -> str:
     return "\n".join(lines) + "\n"
 
 def gen_vps_compose(services) -> str:
-    ports = [
-        '      - "7000:7000"  # frp control',
-        '      - "7500:7500"  # dashboard',
-    ]
+    ports = ['      - "7000:7000"  # frp control', '      - "7500:7500"  # dashboard']
     for svc in services:
         ports.append(f'      - "{svc.remote_port}:{svc.remote_port}"  # {svc.name}')
     return (
@@ -126,20 +127,57 @@ def gen_vps_compose(services) -> str:
         "services:\n  frps:\n    image: snowdreamtech/frps:0.51.3\n"
         "    restart: unless-stopped\n    volumes:\n"
         "      - ./frps.ini:/etc/frp/frps.ini:ro\n    ports:\n"
-        + "\n".join(ports)
-        + "\n    command: frps -c /etc/frp/frps.ini\n"
+        + "\n".join(ports) + "\n    command: frps -c /etc/frp/frps.ini\n"
+    )
+
+def gen_nginx_conf(domain, services) -> str:
+    locations = ""
+    for svc in services:
+        locations += (
+            f"\n    # {svc.name}\n"
+            f"    location /{svc.name}/ {{\n"
+            f"        proxy_pass http://127.0.0.1:{svc.remote_port}/;\n"
+            f"        proxy_set_header Host $host;\n"
+            f"        proxy_set_header X-Real-IP $remote_addr;\n"
+            f"        proxy_set_header X-Forwarded-Proto $scheme;\n"
+            f"        proxy_read_timeout 300s;\n"
+            f"        proxy_buffering off;\n"
+            f"    }}\n"
+        )
+    return (
+        f"server {{\n"
+        f"    listen 80;\n"
+        f"    server_name {domain};\n"
+        f"    return 301 https://$host$request_uri;\n"
+        f"}}\n\n"
+        f"server {{\n"
+        f"    listen 443 ssl;\n"
+        f"    server_name {domain};\n\n"
+        f"    ssl_certificate /etc/letsencrypt/live/{domain}/fullchain.pem;\n"
+        f"    ssl_certificate_key /etc/letsencrypt/live/{domain}/privkey.pem;\n"
+        f"    include /etc/letsencrypt/options-ssl-nginx.conf;\n"
+        f"    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;\n"
+        f"{locations}}}\n"
     )
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def run(cmd: str, silent=False):
-    kwargs = dict(shell=True, capture_output=True, text=True) if silent else dict(shell=True)
-    return subprocess.run(cmd, **kwargs)
+    kw = dict(shell=True, capture_output=True, text=True) if silent else dict(shell=True)
+    return subprocess.run(cmd, **kw)
 
-def ssh(host, cmd):
+def ssh_cmd(host, cmd):
     return run(f'ssh -i "{SSH_KEY}" -o StrictHostKeyChecking=no root@{host} "{cmd}"')
 
 def scp_file(src: Path, host, remote_path):
     return run(f'scp -i "{SSH_KEY}" "{src}" root@{host}:{remote_path}')
+
+def scp_str(content: str, host, remote_path):
+    """Write a string to a remote file via SSH stdin."""
+    proc = subprocess.run(
+        f'ssh -i "{SSH_KEY}" -o StrictHostKeyChecking=no root@{host} "cat > {remote_path}"',
+        input=content, shell=True, text=True
+    )
+    return proc
 
 def port_open(host, port, timeout=3) -> bool:
     try:
@@ -148,7 +186,16 @@ def port_open(host, port, timeout=3) -> bool:
     except Exception:
         return False
 
-def sync_firewall(services):
+def https_check(domain, path="/") -> bool:
+    try:
+        import urllib.request, ssl
+        ctx = ssl.create_default_context()
+        urllib.request.urlopen(f"https://{domain}{path}", context=ctx, timeout=5)
+        return True
+    except Exception:
+        return False
+
+def sync_firewall(services, extra_ports=None):
     result = run("doctl compute firewall list --format ID,Name --no-header", silent=True)
     if result.returncode != 0:
         print(f"  {yellow('⚠')}  doctl not available — skipping firewall sync")
@@ -157,16 +204,17 @@ def sync_firewall(services):
     if not fw_lines:
         print(f"  {yellow('⚠')}  porthole-fw firewall not found — skipping firewall sync")
         return
-    fw_id = fw_lines[0].split()[0]
-    rules  = "protocol:tcp,ports:22,address:0.0.0.0/0,address:::/0"
-    rules += " protocol:tcp,ports:7000,address:0.0.0.0/0,address:::/0"
-    rules += " protocol:tcp,ports:7500,address:0.0.0.0/0,address:::/0"
-    for svc in services:
-        rules += f" protocol:tcp,ports:{svc.remote_port},address:0.0.0.0/0,address:::/0"
-    out_rules = "protocol:tcp,ports:all,address:0.0.0.0/0,address:::/0 protocol:udp,ports:all,address:0.0.0.0/0,address:::/0"
-    run(f'doctl compute firewall update {fw_id} --name porthole-fw --inbound-rules "{rules}" --outbound-rules "{out_rules}"', silent=True)
-    ports_str = ", ".join(str(s.remote_port) for s in services)
-    print(f"  {green('✓')}  firewall synced (22, 7000, 7500, {ports_str})")
+    fw_id  = fw_lines[0].split()[0]
+    fixed  = [22, 7000, 7500] + (extra_ports or [])
+    rules  = " ".join(f"protocol:tcp,ports:{p},address:0.0.0.0/0,address:::/0" for p in fixed)
+    rules += " " + " ".join(
+        f"protocol:tcp,ports:{svc.remote_port},address:0.0.0.0/0,address:::/0"
+        for svc in services
+    )
+    out = "protocol:tcp,ports:all,address:0.0.0.0/0,address:::/0 protocol:udp,ports:all,address:0.0.0.0/0,address:::/0"
+    run(f'doctl compute firewall update {fw_id} --name porthole-fw --inbound-rules "{rules}" --outbound-rules "{out}"', silent=True)
+    all_ports = fixed + [svc.remote_port for svc in services]
+    print(f"  {green('✓')}  firewall synced ({', '.join(map(str, all_ports))})")
 
 # ── Commands ──────────────────────────────────────────────────────────────────
 def cmd_config(args):
@@ -176,63 +224,82 @@ def cmd_config(args):
 
     if args.vps:
         save_env(LOCAL_ENV, {"VPS_HOST": args.vps})
-        print(f"  {green('✓')}  VPS_HOST  →  {bold(args.vps)}")
+        print(f"  {green('✓')}  VPS_HOST       →  {bold(args.vps)}")
         changed = True
-
     if args.token:
         save_env(LOCAL_ENV, {"FRP_TOKEN": args.token})
         save_env(VPS_ENV,   {"FRP_TOKEN": args.token})
-        print(f"  {green('✓')}  FRP_TOKEN updated in local/.env and vps/.env")
+        print(f"  {green('✓')}  FRP_TOKEN updated")
         changed = True
-
     if args.rotate_token:
         token = secrets.token_hex(32)
         save_env(LOCAL_ENV, {"FRP_TOKEN": token})
         save_env(VPS_ENV,   {"FRP_TOKEN": token})
         print(f"  {green('✓')}  FRP_TOKEN rotated  →  {token}")
-        print(f"  {yellow('!')}  Run 'python porthole.py sync' then redeploy frps on the VPS")
+        print(f"  {yellow('!')}  Run 'python porthole.py sync' to apply")
         changed = True
-
     if args.dashboard:
         save_env(VPS_ENV, {"DASHBOARD_PWD": args.dashboard})
-        print(f"  {green('✓')}  DASHBOARD_PWD updated in vps/.env")
+        print(f"  {green('✓')}  DASHBOARD_PWD updated")
+        changed = True
+    if args.domain:
+        save_env(VPS_ENV, {"DOMAIN": args.domain})
+        print(f"  {green('✓')}  DOMAIN         →  {bold(args.domain)}")
+        print(f"  {yellow('!')}  Point your domain to {env_local.get('VPS_HOST', '<VPS_IP>')} then run: python porthole.py secure setup")
+        changed = True
+    if args.email:
+        save_env(VPS_ENV, {"EMAIL": args.email})
+        print(f"  {green('✓')}  EMAIL          →  {bold(args.email)}")
         changed = True
 
     if not changed:
-        # Show current config
-        env = {**env_local, **env_vps}
-        vps   = env.get("VPS_HOST",      dim("not set"))
-        token = env.get("FRP_TOKEN",     "")
-        dash  = env.get("DASHBOARD_PWD", dim("not set"))
-        token_display = (token[:8] + "..." + token[-4:]) if token else dim("not set")
+        env    = {**env_local, **env_vps}
+        vps    = env.get("VPS_HOST",      dim("not set"))
+        token  = env.get("FRP_TOKEN",     "")
+        dash   = env.get("DASHBOARD_PWD", "")
+        domain = env.get("DOMAIN",        dim("not set"))
+        email  = env.get("EMAIL",         dim("not set"))
+        token_d = (token[:8] + "..." + token[-4:]) if token else dim("not set")
+        dash_d  = "*" * 8 if dash else dim("not set")
+        mode    = green("HTTPS ✓") if env.get("DOMAIN") else yellow("HTTP (non-secure)")
+
         print(f"\n  {bold('Current config')}\n")
-        print(f"  {'VPS_HOST':<18}  {bold(vps)}")
-        print(f"  {'FRP_TOKEN':<18}  {token_display}  {dim('(masked)')}")
-        print(f"  {'DASHBOARD_PWD':<18}  {'*' * 8 if dash != dim('not set') else dash}")
-        print(f"\n  {dim('Dashboard:')}  http://{env.get('VPS_HOST','?')}:7500")
-        print(f"\n  {dim('To change values:')}")
-        print(f"  python porthole.py config --vps <IP>")
-        print(f"  python porthole.py config --token <TOKEN>")
-        print(f"  python porthole.py config --dashboard <PASSWORD>")
-        print(f"  python porthole.py config --rotate-token\n")
+        print(f"  {'VPS_HOST':<16}  {bold(vps)}")
+        print(f"  {'FRP_TOKEN':<16}  {token_d}  {dim('(masked)')}")
+        print(f"  {'DASHBOARD_PWD':<16}  {dash_d}")
+        print(f"  {'DOMAIN':<16}  {domain}")
+        print(f"  {'EMAIL':<16}  {email}")
+        print(f"  {'MODE':<16}  {mode}")
+        print()
+        if env.get("DOMAIN"):
+            print(f"  {dim('HTTPS base URL:')}  https://{env['DOMAIN']}/<service>/")
+        print(f"  {dim('Dashboard:')}       http://{env.get('VPS_HOST','?')}:7500")
+        print()
 
 def cmd_list(_args):
     services = load_services()
-    env = load_env(LOCAL_ENV)
-    vps = env.get("VPS_HOST", dim("not set"))
-    print(f"\n  VPS: {bold(vps)}\n")
-    print(f"  {bold('NAME'):<28}  {bold('LOCAL'):<30}  {bold('VPS PORT')}")
-    print(f"  {'-'*26}  {'-'*28}  {'-'*8}")
+    env      = {**load_env(LOCAL_ENV), **load_env(VPS_ENV)}
+    vps      = env.get("VPS_HOST", dim("not set"))
+    domain   = env.get("DOMAIN", "")
+    print(f"\n  VPS: {bold(vps)}")
+    if domain:
+        print(f"  Domain: {bold(domain)}  {green('(HTTPS)')}")
+    print()
+    print(f"  {bold('NAME'):<26}  {bold('LOCAL'):<28}  {bold('HTTP URL')}")
+    print(f"  {'-'*24}  {'-'*26}  {'-'*30}")
     for svc in services:
-        lhost = svc.local_host or "host.docker.internal"
-        print(f"  {svc.name:<26}  {lhost}:{svc.local_port:<22}  :{svc.remote_port}")
+        lhost   = svc.local_host or "host.docker.internal"
+        http    = f"http://{vps}:{svc.remote_port}"
+        https   = f"https://{domain}/{svc.name}/" if domain else ""
+        url_str = f"{http}  {dim(f'→ {https}') if https else ''}"
+        print(f"  {svc.name:<24}  {lhost}:{svc.local_port:<22}  {url_str}")
     print()
 
 def cmd_add(args):
-    content = SERVICES_CONF.read_text(encoding="utf-8")
+    content  = SERVICES_CONF.read_text(encoding="utf-8")
     services = load_services()
     if any(s.name == args.name for s in services):
-        print(f"  {red('✗')}  Service '{args.name}' already exists. Remove it first.")
+        print(f"  {red('✗')}  '{args.name}' already exists.")
         sys.exit(1)
     lhost_part = f" : {args.docker}" if args.docker else ""
     entry = f"{args.name:<16}: {args.local_port:<6}: {args.remote_port}{lhost_part}"
@@ -243,82 +310,178 @@ def cmd_add(args):
 
 def cmd_remove(args):
     lines = SERVICES_CONF.read_text(encoding="utf-8").splitlines()
-    new_lines, removed = [], False
+    out, removed = [], False
     for line in lines:
-        stripped = line.strip()
-        if stripped and not stripped.startswith("#"):
-            name = stripped.split(":")[0].strip()
-            if name == args.name:
-                removed = True
-                continue
-        new_lines.append(line)
+        s = line.strip()
+        if s and not s.startswith("#") and s.split(":")[0].strip() == args.name:
+            removed = True
+            continue
+        out.append(line)
     if not removed:
-        print(f"  {red('✗')}  Service '{args.name}' not found.")
+        print(f"  {red('✗')}  '{args.name}' not found.")
         sys.exit(1)
-    SERVICES_CONF.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    SERVICES_CONF.write_text("\n".join(out) + "\n", encoding="utf-8")
     print(f"  {green('✓')}  Removed: {bold(args.name)}")
     if not getattr(args, "no_sync", False):
         cmd_sync(args)
 
 def cmd_sync(_args):
     print()
-    env  = {**load_env(LOCAL_ENV), **load_env(VPS_ENV)}
+    env       = {**load_env(LOCAL_ENV), **load_env(VPS_ENV)}
     vps_host  = env.get("VPS_HOST",  "")
     frp_token = env.get("FRP_TOKEN", "")
+    domain    = env.get("DOMAIN",    "")
     services  = load_services()
 
-    # 1. local/frpc.ini
     FRPC_INI.write_text(gen_frpc_ini(services, vps_host, frp_token), encoding="utf-8")
     print(f"  {green('✓')}  local/frpc.ini")
 
-    # 2. vps/docker-compose.yml
     VPS_COMPOSE.write_text(gen_vps_compose(services), encoding="utf-8")
     print(f"  {green('✓')}  vps/docker-compose.yml")
 
-    # 3. Push to VPS + restart frps
     if vps_host and SSH_KEY.exists():
         scp_file(VPS_COMPOSE, vps_host, "~/porthole/vps/docker-compose.yml")
-        ssh(vps_host, "cd ~/porthole/vps && docker compose up -d --quiet-pull 2>/dev/null")
-        print(f"  {green('✓')}  VPS updated & frps restarted")
+        ssh_cmd(vps_host, "cd ~/porthole/vps && docker compose up -d --quiet-pull 2>/dev/null")
+        print(f"  {green('✓')}  VPS frps restarted")
+
+        # Push updated Nginx config if domain is set
+        if domain:
+            nginx_conf = gen_nginx_conf(domain, services)
+            scp_str(nginx_conf, vps_host, "/etc/nginx/sites-available/porthole")
+            ssh_cmd(vps_host, "nginx -t 2>/dev/null && systemctl reload nginx")
+            print(f"  {green('✓')}  Nginx config updated")
     else:
         print(f"  {yellow('⚠')}  SSH key or VPS_HOST missing — skipping VPS push")
-        print(f"       Manually run: scp vps/docker-compose.yml root@VPS:~/porthole/vps/")
 
-    # 4. Sync DO firewall
-    sync_firewall(services)
+    extra = [80, 443] if domain else []
+    sync_firewall(services, extra_ports=extra)
 
-    # 5. Restart local frpc if Docker is available
     result = run("docker compose -f local/docker-compose.yml up -d --force-recreate frpc", silent=True)
-    if result.returncode == 0:
-        print(f"  {green('✓')}  local frpc restarted")
-    else:
-        print(f"  {yellow('⚠')}  Docker not running locally — restart frpc manually")
+    print(f"  {green('✓')}  local frpc restarted" if result.returncode == 0
+          else f"  {yellow('⚠')}  Docker not running locally — restart frpc manually")
 
-    print(f"\n  {bold('Services configured')} ({len(services)}):")
+    print(f"\n  {bold('Services')} ({len(services)}):")
     for svc in services:
         lhost = svc.local_host or "host.docker.internal"
-        print(f"    {svc.name:<20}  {lhost}:{svc.local_port}  →  {vps_host}:{svc.remote_port}")
+        url   = f"https://{domain}/{svc.name}/" if domain else f"http://{vps_host}:{svc.remote_port}"
+        print(f"    {svc.name:<20}  {lhost}:{svc.local_port}  →  {url}")
     print()
 
 def cmd_status(_args):
-    env      = load_env(LOCAL_ENV)
+    env      = {**load_env(LOCAL_ENV), **load_env(VPS_ENV)}
     vps_host = env.get("VPS_HOST", "")
+    domain   = env.get("DOMAIN",   "")
     services = load_services()
+
     if not vps_host:
-        print(f"  {red('✗')}  VPS_HOST not set in local/.env")
+        print(f"  {red('✗')}  VPS_HOST not set")
         return
-    print(f"\n  Checking {bold(vps_host)}...\n")
 
-    # frp control port
+    print(f"\n  {bold('Tunnel')}  ({vps_host})\n")
     ctrl = port_open(vps_host, 7000)
-    print(f"  {green('✓') if ctrl else red('✗')}  frps control  :{7000}")
-
+    print(f"  {green('✓') if ctrl else red('✗')}  frps control   :7000")
     for svc in services:
         up = port_open(vps_host, svc.remote_port)
-        icon = green("✓") if up else red("✗")
-        url  = f"http://{vps_host}:{svc.remote_port}"
-        print(f"  {icon}  {svc.name:<20}  {url}")
+        print(f"  {green('✓') if up else red('✗')}  {svc.name:<20} http://{vps_host}:{svc.remote_port}")
+
+    if domain:
+        print(f"\n  {bold('HTTPS')}  ({domain})\n")
+        for svc in services:
+            ok = https_check(domain, f"/{svc.name}/")
+            print(f"  {green('✓') if ok else red('✗')}  {svc.name:<20} https://{domain}/{svc.name}/")
+
+        # Cert expiry
+        try:
+            import ssl, datetime
+            ctx  = ssl.create_default_context()
+            with ctx.wrap_socket(socket.socket(), server_hostname=domain) as s:
+                s.settimeout(5)
+                s.connect((domain, 443))
+                cert    = s.getpeercert()
+                expires = datetime.datetime.strptime(cert["notAfter"], "%b %d %H:%M:%S %Y %Z")
+                days    = (expires - datetime.datetime.utcnow()).days
+                icon    = green("✓") if days > 14 else yellow("!")
+                print(f"\n  {icon}  SSL cert expires in {bold(str(days))} days ({expires.strftime('%Y-%m-%d')})")
+        except Exception:
+            print(f"  {yellow('⚠')}  Could not check cert expiry")
     print()
+
+def cmd_secure(args):
+    env      = {**load_env(LOCAL_ENV), **load_env(VPS_ENV)}
+    vps_host = env.get("VPS_HOST", "")
+    domain   = env.get("DOMAIN",   "")
+    email    = env.get("EMAIL",    "")
+    services = load_services()
+
+    if args.secure_cmd == "setup":
+        if not domain:
+            print(f"  {red('✗')}  No domain set. Run: python porthole.py config --domain yourname.duckdns.org")
+            sys.exit(1)
+        if not email:
+            print(f"  {red('✗')}  No email set. Run: python porthole.py config --email you@example.com")
+            sys.exit(1)
+        if not vps_host or not SSH_KEY.exists():
+            print(f"  {red('✗')}  VPS_HOST or SSH key missing.")
+            sys.exit(1)
+
+        print(f"\n  Setting up HTTPS for {bold(domain)} on {vps_host}...\n")
+
+        # Open ports 80 + 443 in firewall
+        sync_firewall(services, extra_ports=[80, 443])
+
+        # Install Nginx + Certbot
+        print(f"  Installing Nginx + Certbot...")
+        ssh_cmd(vps_host, "apt-get update -qq && apt-get install -y -qq nginx certbot python3-certbot-nginx")
+        print(f"  {green('✓')}  Nginx + Certbot installed")
+
+        # Write Nginx config (HTTP only first so certbot can verify)
+        pre_conf = (
+            f"server {{\n"
+            f"    listen 80;\n"
+            f"    server_name {domain};\n"
+            f"    location / {{ return 200 'ok'; add_header Content-Type text/plain; }}\n"
+            f"}}\n"
+        )
+        scp_str(pre_conf, vps_host, "/etc/nginx/sites-available/porthole")
+        ssh_cmd(vps_host, "ln -sf /etc/nginx/sites-available/porthole /etc/nginx/sites-enabled/porthole && nginx -t 2>/dev/null && systemctl reload nginx")
+        print(f"  {green('✓')}  Nginx configured")
+
+        # Get SSL cert
+        print(f"  Requesting SSL certificate from Let's Encrypt...")
+        result = ssh_cmd(vps_host, f"certbot certonly --nginx -d {domain} --non-interactive --agree-tos -m {email} 2>&1")
+        if result.returncode != 0:
+            print(f"  {red('✗')}  Certbot failed. Make sure {domain} points to {vps_host} (port 80 must be reachable).")
+            sys.exit(1)
+        print(f"  {green('✓')}  SSL certificate issued")
+
+        # Write full Nginx config with SSL + all service proxies
+        nginx_conf = gen_nginx_conf(domain, services)
+        scp_str(nginx_conf, vps_host, "/etc/nginx/sites-available/porthole")
+        ssh_cmd(vps_host, "nginx -t 2>/dev/null && systemctl reload nginx")
+        print(f"  {green('✓')}  Nginx SSL config applied")
+
+        # Auto-renew via cron
+        ssh_cmd(vps_host, "(crontab -l 2>/dev/null | grep -v certbot; echo '0 3 * * * certbot renew --quiet && systemctl reload nginx') | crontab -")
+        print(f"  {green('✓')}  Auto-renewal cron set (daily at 3am)")
+
+        print(f"\n  {bold('HTTPS is live!')}  Your services:\n")
+        for svc in services:
+            print(f"    https://{domain}/{svc.name}/")
+        print()
+
+    elif args.secure_cmd == "status":
+        cmd_status(None)
+
+    elif args.secure_cmd == "renew":
+        if not vps_host or not SSH_KEY.exists():
+            print(f"  {red('✗')}  VPS_HOST or SSH key missing.")
+            sys.exit(1)
+        print(f"  Renewing certificates...")
+        ssh_cmd(vps_host, "certbot renew --quiet && systemctl reload nginx")
+        print(f"  {green('✓')}  Done. Run 'python porthole.py secure status' to check.")
+
+    else:
+        print("  Usage: python porthole.py secure [setup|status|renew]")
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 def main():
@@ -328,45 +491,55 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
-            "  python porthole.py list\n"
-            "  python porthole.py add fastapi 8000 8000\n"
-            "  python porthole.py add mydb 5432 5432 --docker postgres\n"
-            "  python porthole.py remove fastapi\n"
-            "  python porthole.py sync\n"
+            "  python porthole.py config --vps 1.2.3.4 --domain me.duckdns.org --email me@x.com\n"
+            "  python porthole.py add ollama 11434 11434\n"
+            "  python porthole.py add ktor 8080 8080\n"
+            "  python porthole.py secure setup\n"
             "  python porthole.py status\n"
         ),
     )
     sub = p.add_subparsers(dest="cmd", metavar="command")
 
-    pc = sub.add_parser("config", help="Show or update VPS/token/dashboard config")
-    pc.add_argument("--vps",           metavar="IP_OR_HOST", help="Set VPS host")
-    pc.add_argument("--token",         metavar="TOKEN",       help="Set FRP shared token")
-    pc.add_argument("--dashboard",     metavar="PASSWORD",    help="Set dashboard password")
-    pc.add_argument("--rotate-token",  action="store_true",   help="Generate a new random token")
+    # config
+    pc = sub.add_parser("config", help="Show or update config")
+    pc.add_argument("--vps",          metavar="IP",       help="Set VPS host")
+    pc.add_argument("--token",        metavar="TOKEN",    help="Set FRP token")
+    pc.add_argument("--dashboard",    metavar="PWD",      help="Set dashboard password")
+    pc.add_argument("--domain",       metavar="DOMAIN",   help="Set domain for HTTPS")
+    pc.add_argument("--email",        metavar="EMAIL",    help="Set email for Let's Encrypt")
+    pc.add_argument("--rotate-token", action="store_true",help="Generate a new random token")
 
-    sub.add_parser("list",   help="List configured services")
-    sub.add_parser("sync",   help="Regenerate configs, push to VPS, sync firewall")
-    sub.add_parser("status", help="Check tunnel health for each service")
+    # list / sync / status
+    sub.add_parser("list",   help="List services")
+    sub.add_parser("sync",   help="Sync configs, push to VPS, update firewall")
+    sub.add_parser("status", help="Check tunnel + HTTPS health")
 
+    # add
     pa = sub.add_parser("add", help="Add a service and sync")
     pa.add_argument("name")
     pa.add_argument("local_port",  type=int)
     pa.add_argument("remote_port", type=int)
-    pa.add_argument("--docker",    metavar="CONTAINER", help="Docker service name if running in compose")
-    pa.add_argument("--no-sync",   action="store_true",  help="Skip sync after adding")
+    pa.add_argument("--docker",   metavar="CONTAINER", help="Docker service name")
+    pa.add_argument("--no-sync",  action="store_true")
 
+    # remove
     pr = sub.add_parser("remove", help="Remove a service and sync")
     pr.add_argument("name")
-    pr.add_argument("--no-sync", action="store_true", help="Skip sync after removing")
+    pr.add_argument("--no-sync", action="store_true")
+
+    # secure
+    ps = sub.add_parser("secure", help="HTTPS setup via Nginx + Let's Encrypt")
+    ps.add_argument("secure_cmd", choices=["setup", "status", "renew"],
+                    metavar="[setup|status|renew]")
 
     args = p.parse_args()
-    dispatch = {"config": cmd_config, "list": cmd_list, "add": cmd_add,
-                "remove": cmd_remove, "sync": cmd_sync, "status": cmd_status}
+    dispatch = {
+        "config": cmd_config, "list": cmd_list,   "add":    cmd_add,
+        "remove": cmd_remove, "sync": cmd_sync,   "status": cmd_status,
+        "secure": cmd_secure,
+    }
     fn = dispatch.get(args.cmd)
-    if fn:
-        fn(args)
-    else:
-        p.print_help()
+    fn(args) if fn else p.print_help()
 
 if __name__ == "__main__":
     main()
