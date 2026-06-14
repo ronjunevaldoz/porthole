@@ -27,6 +27,7 @@ import secrets
 import socket
 import subprocess
 import sys
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -200,6 +201,16 @@ def https_check(domain, path="/") -> bool:
     except Exception:
         return False
 
+def duckdns_update(domain, vps_ip, token) -> bool:
+    """Point a duckdns subdomain to vps_ip. Returns True on success."""
+    subdomain = domain.replace(".duckdns.org", "")
+    url = f"https://www.duckdns.org/update?domains={subdomain}&token={token}&ip={vps_ip}"
+    try:
+        resp = urllib.request.urlopen(url, timeout=10).read().decode().strip()
+        return resp == "OK"
+    except Exception:
+        return False
+
 def sync_firewall(services, extra_ports=None):
     result = run("doctl compute firewall list --format ID,Name --no-header", silent=True)
     if result.returncode != 0:
@@ -260,6 +271,10 @@ def cmd_config(args):
         save_env(LOCAL_ENV, {"SSH_KEY": args.ssh_key})
         print(f"  {green('✓')}  SSH_KEY        →  {bold(args.ssh_key)}")
         changed = True
+    if args.duckdns_token:
+        save_env(VPS_ENV, {"DUCKDNS_TOKEN": args.duckdns_token})
+        print(f"  {green('✓')}  DUCKDNS_TOKEN updated")
+        changed = True
 
     if not changed:
         env    = {**env_local, **env_vps}
@@ -268,20 +283,23 @@ def cmd_config(args):
         dash   = env.get("DASHBOARD_PWD", "")
         domain = env.get("DOMAIN",        dim("not set"))
         email  = env.get("EMAIL",         dim("not set"))
-        key    = env.get("SSH_KEY",       str(Path.home() / ".ssh" / "porthole_do"))
-        key_ok = Path(key).expanduser().exists()
-        token_d = (token[:8] + "..." + token[-4:]) if token else dim("not set")
-        dash_d  = "*" * 8 if dash else dim("not set")
-        mode    = green("HTTPS ✓") if env.get("DOMAIN") else yellow("HTTP (non-secure)")
+        key      = env.get("SSH_KEY", str(Path.home() / ".ssh" / "porthole_do"))
+        key_ok   = Path(key).expanduser().exists()
+        ddns_tok = env.get("DUCKDNS_TOKEN", "")
+        token_d  = (token[:8] + "..." + token[-4:]) if token else dim("not set")
+        dash_d   = "*" * 8 if dash else dim("not set")
+        ddns_d   = ("*" * 6 + ddns_tok[-4:]) if ddns_tok else dim("not set")
+        mode     = green("HTTPS ✓") if env.get("DOMAIN") else yellow("HTTP (non-secure)")
 
         print(f"\n  {bold('Current config')}\n")
-        print(f"  {'VPS_HOST':<16}  {bold(vps)}")
-        print(f"  {'FRP_TOKEN':<16}  {token_d}  {dim('(masked)')}")
-        print(f"  {'DASHBOARD_PWD':<16}  {dash_d}")
-        print(f"  {'DOMAIN':<16}  {domain}")
-        print(f"  {'EMAIL':<16}  {email}")
-        print(f"  {'SSH_KEY':<16}  {key}  {green('(found)') if key_ok else red('(not found)')}")
-        print(f"  {'MODE':<16}  {mode}")
+        print(f"  {'VPS_HOST':<18}  {bold(vps)}")
+        print(f"  {'FRP_TOKEN':<18}  {token_d}  {dim('(masked)')}")
+        print(f"  {'DASHBOARD_PWD':<18}  {dash_d}")
+        print(f"  {'DOMAIN':<18}  {domain}")
+        print(f"  {'DUCKDNS_TOKEN':<18}  {ddns_d}")
+        print(f"  {'EMAIL':<18}  {email}")
+        print(f"  {'SSH_KEY':<18}  {key}  {green('(found)') if key_ok else red('(not found)')}")
+        print(f"  {'MODE':<18}  {mode}")
         print()
         if env.get("DOMAIN"):
             print(f"  {dim('HTTPS base URL:')}  https://{env['DOMAIN']}/<service>/")
@@ -438,6 +456,19 @@ def cmd_secure(args):
 
         print(f"\n  Setting up HTTPS for {bold(domain)} on {vps_host}...\n")
 
+        # Auto-update DuckDNS if token is set
+        ddns_token = env.get("DUCKDNS_TOKEN", "")
+        if ddns_token and "duckdns.org" in domain:
+            ok = duckdns_update(domain, vps_host, ddns_token)
+            if ok:
+                print(f"  {green('✓')}  DuckDNS updated  →  {domain} points to {vps_host}")
+            else:
+                print(f"  {red('✗')}  DuckDNS update failed — check your DUCKDNS_TOKEN")
+                sys.exit(1)
+        else:
+            print(f"  {yellow('!')}  Make sure {domain} points to {vps_host} before continuing")
+            input("     Press Enter when DNS is ready... ")
+
         # Open ports 80 + 443 in firewall
         sync_firewall(services, extra_ports=[80, 443])
 
@@ -519,8 +550,9 @@ def main():
     pc.add_argument("--dashboard",    metavar="PWD",      help="Set dashboard password")
     pc.add_argument("--domain",       metavar="DOMAIN",   help="Set domain for HTTPS")
     pc.add_argument("--email",        metavar="EMAIL",    help="Set email for Let's Encrypt")
-    pc.add_argument("--ssh-key",      metavar="PATH",     help="Set path to SSH private key")
-    pc.add_argument("--rotate-token", action="store_true",help="Generate a new random token")
+    pc.add_argument("--ssh-key",       metavar="PATH",   help="Set path to SSH private key")
+    pc.add_argument("--duckdns-token", metavar="TOKEN",  help="Set DuckDNS token for auto DNS update")
+    pc.add_argument("--rotate-token",  action="store_true", help="Generate a new random token")
 
     # list / sync / status
     sub.add_parser("list",   help="List services")
