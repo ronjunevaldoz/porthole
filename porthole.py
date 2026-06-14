@@ -3,6 +3,11 @@
 porthole - manage FRP tunnel services
 
 Usage:
+  python porthole.py config                   # show current config
+  python porthole.py config --vps IP          # set VPS host
+  python porthole.py config --token TOKEN     # set FRP token (both .env files)
+  python porthole.py config --dashboard PWD   # set dashboard password
+  python porthole.py config --rotate-token    # generate a new token automatically
   python porthole.py list
   python porthole.py add <name> <local_port> <remote_port> [--docker <container>]
   python porthole.py remove <name>
@@ -12,6 +17,7 @@ Usage:
 
 import argparse
 import os
+import secrets
 import socket
 import subprocess
 import sys
@@ -51,6 +57,26 @@ def load_env(path: Path) -> dict:
                 k, v = line.split("=", 1)
                 env[k.strip()] = v.strip()
     return env
+
+def save_env(path: Path, updates: dict):
+    """Update or add keys in a .env file, creating it if needed."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    written = set()
+    new_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            k = stripped.split("=", 1)[0].strip()
+            if k in updates:
+                new_lines.append(f"{k}={updates[k]}")
+                written.add(k)
+                continue
+        new_lines.append(line)
+    for k, v in updates.items():
+        if k not in written:
+            new_lines.append(f"{k}={v}")
+    path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
 
 def load_services() -> list:
     services = []
@@ -143,6 +169,53 @@ def sync_firewall(services):
     print(f"  {green('✓')}  firewall synced (22, 7000, 7500, {ports_str})")
 
 # ── Commands ──────────────────────────────────────────────────────────────────
+def cmd_config(args):
+    env_local = load_env(LOCAL_ENV)
+    env_vps   = load_env(VPS_ENV)
+    changed   = False
+
+    if args.vps:
+        save_env(LOCAL_ENV, {"VPS_HOST": args.vps})
+        print(f"  {green('✓')}  VPS_HOST  →  {bold(args.vps)}")
+        changed = True
+
+    if args.token:
+        save_env(LOCAL_ENV, {"FRP_TOKEN": args.token})
+        save_env(VPS_ENV,   {"FRP_TOKEN": args.token})
+        print(f"  {green('✓')}  FRP_TOKEN updated in local/.env and vps/.env")
+        changed = True
+
+    if args.rotate_token:
+        token = secrets.token_hex(32)
+        save_env(LOCAL_ENV, {"FRP_TOKEN": token})
+        save_env(VPS_ENV,   {"FRP_TOKEN": token})
+        print(f"  {green('✓')}  FRP_TOKEN rotated  →  {token}")
+        print(f"  {yellow('!')}  Run 'python porthole.py sync' then redeploy frps on the VPS")
+        changed = True
+
+    if args.dashboard:
+        save_env(VPS_ENV, {"DASHBOARD_PWD": args.dashboard})
+        print(f"  {green('✓')}  DASHBOARD_PWD updated in vps/.env")
+        changed = True
+
+    if not changed:
+        # Show current config
+        env = {**env_local, **env_vps}
+        vps   = env.get("VPS_HOST",      dim("not set"))
+        token = env.get("FRP_TOKEN",     "")
+        dash  = env.get("DASHBOARD_PWD", dim("not set"))
+        token_display = (token[:8] + "..." + token[-4:]) if token else dim("not set")
+        print(f"\n  {bold('Current config')}\n")
+        print(f"  {'VPS_HOST':<18}  {bold(vps)}")
+        print(f"  {'FRP_TOKEN':<18}  {token_display}  {dim('(masked)')}")
+        print(f"  {'DASHBOARD_PWD':<18}  {'*' * 8 if dash != dim('not set') else dash}")
+        print(f"\n  {dim('Dashboard:')}  http://{env.get('VPS_HOST','?')}:7500")
+        print(f"\n  {dim('To change values:')}")
+        print(f"  python porthole.py config --vps <IP>")
+        print(f"  python porthole.py config --token <TOKEN>")
+        print(f"  python porthole.py config --dashboard <PASSWORD>")
+        print(f"  python porthole.py config --rotate-token\n")
+
 def cmd_list(_args):
     services = load_services()
     env = load_env(LOCAL_ENV)
@@ -265,6 +338,12 @@ def main():
     )
     sub = p.add_subparsers(dest="cmd", metavar="command")
 
+    pc = sub.add_parser("config", help="Show or update VPS/token/dashboard config")
+    pc.add_argument("--vps",           metavar="IP_OR_HOST", help="Set VPS host")
+    pc.add_argument("--token",         metavar="TOKEN",       help="Set FRP shared token")
+    pc.add_argument("--dashboard",     metavar="PASSWORD",    help="Set dashboard password")
+    pc.add_argument("--rotate-token",  action="store_true",   help="Generate a new random token")
+
     sub.add_parser("list",   help="List configured services")
     sub.add_parser("sync",   help="Regenerate configs, push to VPS, sync firewall")
     sub.add_parser("status", help="Check tunnel health for each service")
@@ -281,8 +360,8 @@ def main():
     pr.add_argument("--no-sync", action="store_true", help="Skip sync after removing")
 
     args = p.parse_args()
-    dispatch = {"list": cmd_list, "add": cmd_add, "remove": cmd_remove,
-                "sync": cmd_sync, "status": cmd_status}
+    dispatch = {"config": cmd_config, "list": cmd_list, "add": cmd_add,
+                "remove": cmd_remove, "sync": cmd_sync, "status": cmd_status}
     fn = dispatch.get(args.cmd)
     if fn:
         fn(args)
