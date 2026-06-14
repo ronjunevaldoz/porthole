@@ -51,14 +51,11 @@ cd porthole
 
 ```bash
 python porthole.py config --vps <YOUR_VPS_IP>
-python porthole.py config --token <YOUR_FRP_TOKEN>   # or use --rotate-token to auto-generate
+python porthole.py config --token <FRP_TOKEN>    # or: --rotate-token to auto-generate
 python porthole.py config --dashboard <PASSWORD>
 ```
 
-> **First time?** Generate a token with `openssl rand -hex 32`  
-> or let porthole do it: `python porthole.py config --rotate-token`
-
-### 3 — Add your services
+### 3 — Add services
 
 ```bash
 python porthole.py add ollama  11434 11434   # native Ollama
@@ -66,7 +63,7 @@ python porthole.py add ktor    8080  8080    # native Ktor
 python porthole.py add fastapi 8000  8000    # native FastAPI
 ```
 
-Each `add` automatically syncs everything — configs, VPS, and firewall.
+Each `add` automatically syncs configs, restarts frpc, updates the VPS, and opens the firewall port.
 
 ### 4 — Check status
 
@@ -75,7 +72,6 @@ python porthole.py status
 #  ✓  frps control   :7000
 #  ✓  ollama         http://<VPS_IP>:11434
 #  ✓  ktor           http://<VPS_IP>:8080
-#  ✓  fastapi        http://<VPS_IP>:8000
 ```
 
 ---
@@ -83,18 +79,75 @@ python porthole.py status
 ## CLI reference
 
 ```bash
-python porthole.py config                       # show current VPS/token config
-python porthole.py config --vps <IP>            # set VPS host
-python porthole.py config --token <TOKEN>       # set FRP token
-python porthole.py config --dashboard <PWD>     # set dashboard password
-python porthole.py config --rotate-token        # generate a new token automatically
+# ── Config ────────────────────────────────────────────────────────────────────
+python porthole.py config                        # show all current settings
+python porthole.py config --vps <IP>             # set VPS host
+python porthole.py config --token <TOKEN>        # set FRP shared token
+python porthole.py config --rotate-token         # auto-generate a new token
+python porthole.py config --dashboard <PWD>      # set FRP dashboard password
+python porthole.py config --domain <DOMAIN>      # set domain for HTTPS
+python porthole.py config --duckdns-token <TOK>  # set DuckDNS token (auto DNS update)
+python porthole.py config --email <EMAIL>        # set email for Let's Encrypt
+python porthole.py config --ssh-key <PATH>       # set SSH key path (default: ~/.ssh/porthole_do)
 
-python porthole.py list                         # list configured services
-python porthole.py add <name> <lport> <rport>   # add a service and sync
-python porthole.py add mydb 5432 5432 --docker postgres  # docker service
-python porthole.py remove <name>                # remove a service and sync
-python porthole.py sync                         # force sync everything
-python porthole.py status                       # check tunnel health
+# ── Services ──────────────────────────────────────────────────────────────────
+python porthole.py list                          # list configured services
+python porthole.py add <name> <lport> <rport>   # add a service and sync everything
+python porthole.py add mydb 5432 5432 --docker postgres  # docker-based service
+python porthole.py remove <name>                 # remove a service and sync
+
+# ── Sync & status ─────────────────────────────────────────────────────────────
+python porthole.py sync                          # force sync everything to VPS
+python porthole.py status                        # check tunnel + HTTPS health
+
+# ── HTTPS ─────────────────────────────────────────────────────────────────────
+python porthole.py secure setup                  # install Nginx + SSL cert on VPS
+python porthole.py secure status                 # check HTTPS endpoints + cert expiry
+python porthole.py secure renew                  # force SSL cert renewal
+```
+
+---
+
+## Enabling HTTPS
+
+Porthole supports two modes:
+
+| Mode | URL format | Setup |
+|---|---|---|
+| **Non-secure** (default) | `http://<VPS_IP>:11434` | No extra steps |
+| **Secure** | `https://yourdomain.duckdns.org/ollama/` | Follow steps below |
+
+### HTTPS setup
+
+**1 — Get a free domain at [duckdns.org](https://www.duckdns.org)**
+- Sign in with Google / GitHub
+- Create a subdomain (e.g. `myporthole`)
+- Copy your **token** shown at the top of the page
+
+**2 — Configure**
+```bash
+python porthole.py config --domain myporthole.duckdns.org
+python porthole.py config --duckdns-token <duckdns-token>
+python porthole.py config --email you@gmail.com
+```
+
+**3 — Run secure setup**
+```bash
+python porthole.py secure setup
+```
+
+This automatically:
+- Points your domain to the VPS via DuckDNS API
+- Opens ports 80 + 443 on the firewall
+- Installs Nginx + Certbot on the VPS
+- Issues a free Let's Encrypt SSL certificate
+- Configures auto-renewal (daily cron)
+
+**4 — Access your services**
+```
+https://myporthole.duckdns.org/ollama/
+https://myporthole.duckdns.org/ktor/
+https://myporthole.duckdns.org/fastapi/
 ```
 
 ---
@@ -114,9 +167,12 @@ python porthole.py status                       # check tunnel health
 
 ### Ollama (native)
 ```bash
-# Set OLLAMA_HOST before starting
-OLLAMA_HOST=0.0.0.0 ollama serve          # macOS/Linux
-# Windows: set OLLAMA_HOST=0.0.0.0 as a system environment variable
+# macOS/Linux
+OLLAMA_HOST=0.0.0.0 ollama serve
+
+# Windows — set as system environment variable
+# OLLAMA_HOST = 0.0.0.0
+# then restart Ollama from the tray icon
 
 python porthole.py add ollama 11434 11434
 ```
@@ -145,31 +201,48 @@ python porthole.py add fastapi 8000 8000
 
 ## VPS setup (DigitalOcean)
 
-The quickest path:
-
 ```bash
-# Install doctl and authenticate
+# 1. Install and authenticate doctl
 doctl auth init
 
-# Create a $4/mo droplet (Singapore)
+# 2. Generate SSH key
+ssh-keygen -t ed25519 -C "porthole" -f ~/.ssh/porthole_do -N ""
+doctl compute ssh-key import porthole-key --public-key-file ~/.ssh/porthole_do.pub
+
+# 3. Create $4/mo droplet (Singapore)
 doctl compute droplet create porthole-vps \
   --region sgp1 --image ubuntu-24-04-x64 --size s-1vcpu-512mb-10gb \
-  --ssh-keys <your-key-id> --tag-names porthole --wait \
+  --ssh-keys <key-id> --tag-names porthole --wait \
   --user-data '#!/bin/bash
 curl -fsSL https://get.docker.com | sh'
 
-# Create firewall (porthole CLI manages ports automatically after this)
+# 4. Create firewall (porthole CLI manages ports automatically after this)
 doctl compute firewall create \
   --name porthole-fw --tag-names porthole \
   --inbound-rules "protocol:tcp,ports:22,address:0.0.0.0/0 protocol:tcp,ports:7000,address:0.0.0.0/0 protocol:tcp,ports:7500,address:0.0.0.0/0" \
   --outbound-rules "protocol:tcp,ports:all,address:0.0.0.0/0 protocol:udp,ports:all,address:0.0.0.0/0"
-```
 
-Then deploy frps:
-```bash
+# 5. Deploy frps
 ssh root@<VPS_IP> "mkdir -p ~/porthole/vps"
 scp -r vps/ root@<VPS_IP>:~/porthole/
 ssh root@<VPS_IP> "cd ~/porthole/vps && docker compose up -d"
+```
+
+---
+
+## Using from a second machine
+
+```bash
+git clone https://github.com/ronjunevaldoz/porthole.git
+cd porthole
+
+python porthole.py config --vps <VPS_IP>
+python porthole.py config --token <same-frp-token>
+python porthole.py config --ssh-key ~/.ssh/your_key   # if key path differs
+
+# Generate frpc.ini and start the tunnel
+python porthole.py sync
+docker compose -f local/docker-compose.yml up -d
 ```
 
 ---
@@ -182,10 +255,10 @@ ssh root@<VPS_IP> "cd ~/porthole/vps && docker compose up -d"
 
 ## Security notes
 
-- Traffic through the tunnel is **not TLS-encrypted** by default.  
-  For production, put Nginx + Certbot in front of your ports on the VPS.
+- Traffic is **not TLS-encrypted** by default. Use `python porthole.py secure setup` for HTTPS.
 - Never commit `.env` files — `.gitignore` already excludes them.
-- Rotate your token anytime: `python porthole.py config --rotate-token && python porthole.py sync`
+- Rotate your FRP token anytime: `python porthole.py config --rotate-token && python porthole.py sync`
+- SSL certificates auto-renew via a daily cron job on the VPS.
 
 ---
 
