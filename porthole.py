@@ -245,7 +245,7 @@ def cmd_config(args):
     if args.domain:
         save_env(VPS_ENV, {"DOMAIN": args.domain})
         print(f"  {green('✓')}  DOMAIN         →  {bold(args.domain)}")
-        print(f"  {yellow('!')}  Point your domain to {env_local.get('VPS_HOST', '<VPS_IP>')} then run: python porthole.py secure setup")
+        print(f"  {dim('→')}  Point {args.domain} to {env_local.get('VPS_HOST', '<VPS_IP>')} in your DNS, then run: python porthole.py secure setup")
         changed = True
     if args.email:
         save_env(VPS_ENV, {"EMAIL": args.email})
