@@ -36,7 +36,7 @@ LOCAL_ENV     = ROOT / "local" / ".env"
 VPS_ENV       = ROOT / "vps"   / ".env"
 FRPC_INI      = ROOT / "local" / "frpc.ini"
 VPS_COMPOSE   = ROOT / "vps"   / "docker-compose.yml"
-SSH_KEY       = Path.home() / ".ssh" / "porthole_do"
+_DEFAULT_SSH_KEY = Path.home() / ".ssh" / "porthole_do"
 
 # ── Colours ───────────────────────────────────────────────────────────────────
 def _c(code, t): return f"\033[{code}m{t}\033[0m" if sys.stdout.isatty() else t
@@ -82,6 +82,10 @@ def save_env(path: Path, updates: dict):
         if k not in written:
             out.append(f"{k}={v}")
     path.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+def get_ssh_key() -> Path:
+    env = load_env(LOCAL_ENV)
+    return Path(env["SSH_KEY"]).expanduser() if env.get("SSH_KEY") else _DEFAULT_SSH_KEY
 
 def load_services() -> list:
     services = []
@@ -166,18 +170,19 @@ def run(cmd: str, silent=False):
     return subprocess.run(cmd, **kw)
 
 def ssh_cmd(host, cmd):
-    return run(f'ssh -i "{SSH_KEY}" -o StrictHostKeyChecking=no root@{host} "{cmd}"')
+    key = get_ssh_key()
+    return run(f'ssh -i "{key}" -o StrictHostKeyChecking=no root@{host} "{cmd}"')
 
 def scp_file(src: Path, host, remote_path):
-    return run(f'scp -i "{SSH_KEY}" "{src}" root@{host}:{remote_path}')
+    key = get_ssh_key()
+    return run(f'scp -i "{key}" "{src}" root@{host}:{remote_path}')
 
 def scp_str(content: str, host, remote_path):
-    """Write a string to a remote file via SSH stdin."""
-    proc = subprocess.run(
-        f'ssh -i "{SSH_KEY}" -o StrictHostKeyChecking=no root@{host} "cat > {remote_path}"',
+    key = get_ssh_key()
+    return subprocess.run(
+        f'ssh -i "{key}" -o StrictHostKeyChecking=no root@{host} "cat > {remote_path}"',
         input=content, shell=True, text=True
     )
-    return proc
 
 def port_open(host, port, timeout=3) -> bool:
     try:
@@ -251,6 +256,10 @@ def cmd_config(args):
         save_env(VPS_ENV, {"EMAIL": args.email})
         print(f"  {green('✓')}  EMAIL          →  {bold(args.email)}")
         changed = True
+    if args.ssh_key:
+        save_env(LOCAL_ENV, {"SSH_KEY": args.ssh_key})
+        print(f"  {green('✓')}  SSH_KEY        →  {bold(args.ssh_key)}")
+        changed = True
 
     if not changed:
         env    = {**env_local, **env_vps}
@@ -259,6 +268,8 @@ def cmd_config(args):
         dash   = env.get("DASHBOARD_PWD", "")
         domain = env.get("DOMAIN",        dim("not set"))
         email  = env.get("EMAIL",         dim("not set"))
+        key    = env.get("SSH_KEY",       str(Path.home() / ".ssh" / "porthole_do"))
+        key_ok = Path(key).expanduser().exists()
         token_d = (token[:8] + "..." + token[-4:]) if token else dim("not set")
         dash_d  = "*" * 8 if dash else dim("not set")
         mode    = green("HTTPS ✓") if env.get("DOMAIN") else yellow("HTTP (non-secure)")
@@ -269,6 +280,7 @@ def cmd_config(args):
         print(f"  {'DASHBOARD_PWD':<16}  {dash_d}")
         print(f"  {'DOMAIN':<16}  {domain}")
         print(f"  {'EMAIL':<16}  {email}")
+        print(f"  {'SSH_KEY':<16}  {key}  {green('(found)') if key_ok else red('(not found)')}")
         print(f"  {'MODE':<16}  {mode}")
         print()
         if env.get("DOMAIN"):
@@ -339,7 +351,7 @@ def cmd_sync(_args):
     VPS_COMPOSE.write_text(gen_vps_compose(services), encoding="utf-8")
     print(f"  {green('✓')}  vps/docker-compose.yml")
 
-    if vps_host and SSH_KEY.exists():
+    if vps_host and get_ssh_key().exists():
         scp_file(VPS_COMPOSE, vps_host, "~/porthole/vps/docker-compose.yml")
         ssh_cmd(vps_host, "cd ~/porthole/vps && docker compose up -d --quiet-pull 2>/dev/null")
         print(f"  {green('✓')}  VPS frps restarted")
@@ -420,7 +432,7 @@ def cmd_secure(args):
         if not email:
             print(f"  {red('✗')}  No email set. Run: python porthole.py config --email you@example.com")
             sys.exit(1)
-        if not vps_host or not SSH_KEY.exists():
+        if not vps_host or not get_ssh_key().exists():
             print(f"  {red('✗')}  VPS_HOST or SSH key missing.")
             sys.exit(1)
 
@@ -473,7 +485,7 @@ def cmd_secure(args):
         cmd_status(None)
 
     elif args.secure_cmd == "renew":
-        if not vps_host or not SSH_KEY.exists():
+        if not vps_host or not get_ssh_key().exists():
             print(f"  {red('✗')}  VPS_HOST or SSH key missing.")
             sys.exit(1)
         print(f"  Renewing certificates...")
@@ -507,6 +519,7 @@ def main():
     pc.add_argument("--dashboard",    metavar="PWD",      help="Set dashboard password")
     pc.add_argument("--domain",       metavar="DOMAIN",   help="Set domain for HTTPS")
     pc.add_argument("--email",        metavar="EMAIL",    help="Set email for Let's Encrypt")
+    pc.add_argument("--ssh-key",      metavar="PATH",     help="Set path to SSH private key")
     pc.add_argument("--rotate-token", action="store_true",help="Generate a new random token")
 
     # list / sync / status
