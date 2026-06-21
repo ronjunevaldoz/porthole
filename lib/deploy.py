@@ -3,7 +3,9 @@ import subprocess
 import urllib.request
 from pathlib import Path
 
-from .core import get_ssh_key, green, yellow
+from .repository import get_ssh_key
+from .utils import green, yellow
+
 
 def run(cmd: str, silent=False):
     kw = dict(shell=True, capture_output=True, text=True) if silent else dict(shell=True)

@@ -2,7 +2,7 @@ import http.server
 import threading
 import webbrowser
 
-from ..core import green, bold, dim
+from ..utils import green, bold, dim
 from .api import Handler
 
 

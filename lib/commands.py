@@ -2,20 +2,14 @@ import secrets
 import sys
 from pathlib import Path
 
-from .core import (
-    ROOT, SERVICES_CONF, LOCAL_ENV, VPS_ENV, FRPC_INI, VPS_COMPOSE,
-    green, red, yellow, bold, dim,
-    load_env, save_env, get_ssh_key, load_services,
-    gen_frpc_ini, gen_vps_compose, gen_nginx_conf,
-)
-from .deploy import (
-    run, ssh_cmd, scp_file, scp_str,
-    port_open, https_check, duckdns_update, sync_firewall,
-)
+from .utils import green, red, yellow, bold, dim, LOCAL_ENV, VPS_ENV, SERVICES_CONF
+from .repository import load_env, save_env, get_ssh_key, load_config, load_services, FRPC_INI, VPS_COMPOSE
+from .templates import gen_frpc_ini, gen_vps_compose, gen_nginx_conf
+from .deploy import run, ssh_cmd, scp_file, scp_str, port_open, https_check, duckdns_update, sync_firewall
+
 
 def cmd_config(args):
     env_local = load_env(LOCAL_ENV)
-    env_vps   = load_env(VPS_ENV)
     changed   = False
 
     if args.vps:
@@ -57,7 +51,7 @@ def cmd_config(args):
         changed = True
 
     if not changed:
-        env      = {**env_local, **env_vps}
+        env      = load_config()
         vps      = env.get("VPS_HOST",      dim("not set"))
         token    = env.get("FRP_TOKEN",     "")
         dash     = env.get("DASHBOARD_PWD", "")
@@ -88,7 +82,7 @@ def cmd_config(args):
 
 def cmd_list(_args):
     services = load_services()
-    env      = {**load_env(LOCAL_ENV), **load_env(VPS_ENV)}
+    env      = load_config()
     vps      = env.get("VPS_HOST", dim("not set"))
     domain   = env.get("DOMAIN", "")
     print(f"\n  VPS: {bold(vps)}")
@@ -137,7 +131,7 @@ def cmd_remove(args):
 
 def cmd_sync(_args):
     print()
-    env       = {**load_env(LOCAL_ENV), **load_env(VPS_ENV)}
+    env       = load_config()
     vps_host  = env.get("VPS_HOST",  "")
     frp_token = env.get("FRP_TOKEN", "")
     domain    = env.get("DOMAIN",    "")
@@ -153,17 +147,14 @@ def cmd_sync(_args):
         scp_file(VPS_COMPOSE, vps_host, "~/porthole/vps/docker-compose.yml")
         ssh_cmd(vps_host, "cd ~/porthole/vps && docker compose up -d --quiet-pull 2>/dev/null")
         print(f"  {green('✓')}  VPS frps restarted")
-
         if domain:
-            nginx_conf = gen_nginx_conf(domain, services)
-            scp_str(nginx_conf, vps_host, "/etc/nginx/sites-available/porthole")
+            scp_str(gen_nginx_conf(domain, services), vps_host, "/etc/nginx/sites-available/porthole")
             ssh_cmd(vps_host, "nginx -t 2>/dev/null && systemctl reload nginx")
             print(f"  {green('✓')}  Nginx config updated")
     else:
         print(f"  {yellow('⚠')}  SSH key or VPS_HOST missing — skipping VPS push")
 
-    extra = [80, 443] if domain else []
-    sync_firewall(services, extra_ports=extra)
+    sync_firewall(services, extra_ports=[80, 443] if domain else [])
 
     result = run("docker compose -f local/docker-compose.yml up -d --force-recreate frpc", silent=True)
     print(f"  {green('✓')}  local frpc restarted" if result.returncode == 0
@@ -177,7 +168,7 @@ def cmd_sync(_args):
     print()
 
 def cmd_status(_args):
-    env      = {**load_env(LOCAL_ENV), **load_env(VPS_ENV)}
+    env      = load_config()
     vps_host = env.get("VPS_HOST", "")
     domain   = env.get("DOMAIN",   "")
     services = load_services()
@@ -187,8 +178,7 @@ def cmd_status(_args):
         return
 
     print(f"\n  {bold('Tunnel')}  ({vps_host})\n")
-    ctrl = port_open(vps_host, 7000)
-    print(f"  {green('✓') if ctrl else red('✗')}  frps control   :7000")
+    print(f"  {green('✓') if port_open(vps_host, 7000) else red('✗')}  frps control   :7000")
     for svc in services:
         up = port_open(vps_host, svc.remote_port)
         print(f"  {green('✓') if up else red('✗')}  {svc.name:<20} http://{vps_host}:{svc.remote_port}")
@@ -198,11 +188,10 @@ def cmd_status(_args):
         for svc in services:
             ok = https_check(domain, f"/{svc.name}/")
             print(f"  {green('✓') if ok else red('✗')}  {svc.name:<20} https://{domain}/{svc.name}/")
-
         try:
-            import ssl, datetime
-            ctx  = ssl.create_default_context()
-            with ctx.wrap_socket(__import__("socket").socket(), server_hostname=domain) as s:
+            import ssl, datetime, socket as _socket
+            ctx = ssl.create_default_context()
+            with ctx.wrap_socket(_socket.socket(), server_hostname=domain) as s:
                 s.settimeout(5)
                 s.connect((domain, 443))
                 cert    = s.getpeercert()
@@ -215,7 +204,7 @@ def cmd_status(_args):
     print()
 
 def cmd_secure(args):
-    env      = {**load_env(LOCAL_ENV), **load_env(VPS_ENV)}
+    env      = load_config()
     vps_host = env.get("VPS_HOST", "")
     domain   = env.get("DOMAIN",   "")
     email    = env.get("EMAIL",    "")
@@ -247,17 +236,13 @@ def cmd_secure(args):
             input("     Press Enter when DNS is ready... ")
 
         sync_firewall(services, extra_ports=[80, 443])
-
         print(f"  Installing Nginx + Certbot...")
         ssh_cmd(vps_host, "apt-get update -qq && apt-get install -y -qq nginx certbot python3-certbot-nginx")
         print(f"  {green('✓')}  Nginx + Certbot installed")
 
         pre_conf = (
-            f"server {{\n"
-            f"    listen 80;\n"
-            f"    server_name {domain};\n"
-            f"    location / {{ return 200 'ok'; add_header Content-Type text/plain; }}\n"
-            f"}}\n"
+            f"server {{\n    listen 80;\n    server_name {domain};\n"
+            f"    location / {{ return 200 'ok'; add_header Content-Type text/plain; }}\n}}\n"
         )
         scp_str(pre_conf, vps_host, "/etc/nginx/sites-available/porthole")
         ssh_cmd(vps_host, "ln -sf /etc/nginx/sites-available/porthole /etc/nginx/sites-enabled/porthole && nginx -t 2>/dev/null && systemctl reload nginx")
@@ -270,8 +255,7 @@ def cmd_secure(args):
             sys.exit(1)
         print(f"  {green('✓')}  SSL certificate issued")
 
-        nginx_conf = gen_nginx_conf(domain, services)
-        scp_str(nginx_conf, vps_host, "/etc/nginx/sites-available/porthole")
+        scp_str(gen_nginx_conf(domain, services), vps_host, "/etc/nginx/sites-available/porthole")
         ssh_cmd(vps_host, "nginx -t 2>/dev/null && systemctl reload nginx")
         print(f"  {green('✓')}  Nginx SSL config applied")
 

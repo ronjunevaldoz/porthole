@@ -6,7 +6,8 @@ import types
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
-from ..core import load_env, load_services, LOCAL_ENV, VPS_ENV
+from ..repository import load_config, load_services
+from ..utils import _DEFAULT_SSH_KEY
 from ..deploy import port_open
 from ..commands import cmd_sync, cmd_add, cmd_remove
 
@@ -35,8 +36,7 @@ class Handler(BaseHTTPRequestHandler):
             body = _UI_PATH.read_bytes()
             self._send(200, "text/html", body)
         elif self.path == "/api/config":
-            env = {**load_env(LOCAL_ENV), **load_env(VPS_ENV)}
-            from ..core import _DEFAULT_SSH_KEY
+            env = load_config()
             key = Path(env.get("SSH_KEY", str(_DEFAULT_SSH_KEY))).expanduser()
             self._json({
                 "vps_host":      env.get("VPS_HOST", ""),
