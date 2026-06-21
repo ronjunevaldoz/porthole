@@ -551,41 +551,43 @@ header h1{font-size:15px;font-weight:600;letter-spacing:.05em}
 .badge.http{background:#451a03;color:var(--yellow);border:1px solid var(--yellow)}
 .main{display:grid;grid-template-columns:300px 1fr;flex:1;min-height:0}
 .left{border-right:1px solid var(--border);padding:20px;overflow-y:auto}
-.right{display:flex;flex-direction:column;min-height:0}
+.right{display:flex;flex-direction:column;min-height:0;overflow:hidden}
 h2{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);margin-bottom:14px}
 .cfg-row{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border)}
 .cfg-row:last-child{border-bottom:none}
-.cfg-label{color:var(--dim)}
-.cfg-val{color:var(--text);font-weight:500;text-align:right;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.svc-bar{padding:14px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
-.svc-wrap{flex:1;overflow-y:auto}
-table{width:100%;border-collapse:collapse}
-th{text-align:left;padding:9px 20px;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg)}
-td{padding:11px 20px;border-bottom:1px solid var(--border)}
+.cfg-label{color:var(--dim);white-space:nowrap;margin-right:8px}
+.cfg-val{color:var(--text);font-weight:500;text-align:right;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.svc-bar{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-shrink:0;gap:8px}
+.svc-wrap{flex:1;overflow-y:auto;overflow-x:hidden}
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+th{text-align:left;padding:9px 12px;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+td{padding:10px 12px;border-bottom:1px solid var(--border);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 tr:last-child td{border-bottom:none}
 tr:hover td{background:var(--surface)}
-.dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:8px;vertical-align:middle}
+.col-action{width:74px}
+.col-local{width:150px}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:8px;vertical-align:middle;flex-shrink:0}
 .dot.up{background:var(--green);box-shadow:0 0 5px var(--green)}
 .dot.down{background:var(--red)}
 .dot.idle{background:var(--dim)}
 a.url{color:var(--accent);text-decoration:none;font-size:12px}
 a.url:hover{text-decoration:underline}
-.chip{display:inline-block;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 7px;font-size:11px;color:var(--dim)}
-.btn{padding:6px 14px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-family:inherit;font-size:12px;transition:all .15s}
+.chip{display:inline-block;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 7px;font-size:11px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.btn{padding:6px 14px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-family:inherit;font-size:12px;transition:all .15s;white-space:nowrap}
 .btn:hover{border-color:var(--accent);color:var(--accent)}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .btn.primary:hover{opacity:.85}
 .btn.danger{border-color:var(--red);color:var(--red)}
 .btn.danger:hover{background:var(--red);color:#fff}
 .btn.sm{padding:3px 10px;font-size:11px}
-.output{padding:12px 20px;font-size:12px;line-height:1.7;overflow-y:auto;white-space:pre-wrap;color:var(--dim);height:140px;flex-shrink:0;border-top:1px solid var(--border)}
+.output{padding:10px 14px;font-size:12px;line-height:1.7;overflow-y:auto;white-space:pre-wrap;color:var(--dim);height:120px;flex-shrink:0;border-top:1px solid var(--border)}
 .output .ok{color:var(--green)}
 .output .err{color:var(--red)}
-.bar{padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center;background:var(--surface);flex-shrink:0}
-.bar-right{margin-left:auto;color:var(--dim);font-size:11px}
-.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:100;align-items:center;justify-content:center}
+.bar{padding:10px 14px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--surface);flex-shrink:0}
+.bar-right{margin-left:auto;color:var(--dim);font-size:11px;white-space:nowrap}
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:100;align-items:center;justify-content:center;padding:16px}
 .modal-bg.open{display:flex}
-.modal{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;width:340px}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;width:100%;max-width:340px}
 .modal h3{margin-bottom:16px;font-size:14px}
 .field{margin-bottom:12px}
 .field label{display:block;font-size:11px;color:var(--dim);margin-bottom:4px}
@@ -594,6 +596,15 @@ a.url:hover{text-decoration:underline}
 .modal-bar{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
 @keyframes spin{to{transform:rotate(360deg)}}
 .spin{display:inline-block;width:11px;height:11px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite;margin-right:6px;vertical-align:middle}
+@media(max-width:680px){
+  #hdr-vps{display:none}
+  .main{grid-template-columns:1fr;grid-template-rows:auto 1fr}
+  .left{border-right:none;border-bottom:1px solid var(--border);padding:14px 16px;overflow-y:visible}
+  .cfg-row{padding:6px 0}
+  .col-local{display:none}
+  .output{height:90px;font-size:11px}
+  .bar-right{margin-left:0;order:3;width:100%}
+}
 </style>
 </head>
 <body>
@@ -614,7 +625,7 @@ a.url:hover{text-decoration:underline}
     </div>
     <div class="svc-wrap">
       <table>
-        <thead><tr><th>Name</th><th>Local</th><th>URL</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th class="col-local">Local</th><th>URL</th><th class="col-action"></th></tr></thead>
         <tbody id="svc-body"></tbody>
       </table>
     </div>
@@ -664,7 +675,7 @@ function renderCfg(c){
 function renderSvcs(s,c){
   $('svc-body').innerHTML=s.length?s.map(v=>{
     const url=c.domain?`https://${c.domain}/${v.name}/`:`http://${c.vps_host}:${v.remote_port}`;
-    return `<tr><td><span class="dot idle" id="dot-${v.name}"></span>${v.name}</td><td><span class="chip">${v.local_host||'localhost'}:${v.local_port}</span></td><td><a class="url" href="${url}" target="_blank">${url}</a></td><td><button class="btn sm danger" onclick="doRemove('${v.name}')">Remove</button></td></tr>`;
+    return `<tr><td><span class="dot idle" id="dot-${v.name}"></span>${v.name}</td><td class="col-local"><span class="chip">${v.local_host||'localhost'}:${v.local_port}</span></td><td><a class="url" href="${url}" target="_blank">${url}</a></td><td class="col-action"><button class="btn sm danger" onclick="doRemove('${v.name}')">Remove</button></td></tr>`;
   }).join(''):'<tr><td colspan="4" style="color:var(--dim);padding:20px;text-align:center">No services — click + Add</td></tr>';
 }
 
