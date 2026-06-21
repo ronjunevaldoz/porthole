@@ -37,6 +37,8 @@ python porthole.py ui
 
 Opens a local dashboard at `http://localhost:7502` — no extra dependencies.
 
+![Porthole UI](assets/ui-preview.svg)
+
 | Feature | Description |
 |---|---|
 | Config panel | Shows VPS host, domain, SSL mode, SSH key status |
