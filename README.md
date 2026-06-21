@@ -29,6 +29,29 @@ The tunnel is initiated **outbound** from your machine — no port forwarding or
 
 ---
 
+## Web UI
+
+```bash
+python porthole.py ui
+```
+
+Opens a local dashboard at `http://localhost:7502` — no extra dependencies.
+
+| Feature | Description |
+|---|---|
+| Config panel | Shows VPS host, domain, SSL mode, SSH key status |
+| Services table | Live list of tunnels with their public URLs |
+| Status dots | Green/red indicators updated on each status check |
+| Sync button | Pushes configs to VPS and restarts frpc in one click |
+| Add / Remove | Manage services without touching any config files |
+| Output log | Inline terminal output from every action |
+
+```bash
+python porthole.py ui --port 8888   # custom port
+```
+
+---
+
 ## Requirements
 
 | Where | What |
