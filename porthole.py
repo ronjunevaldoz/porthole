@@ -60,6 +60,7 @@ def main():
     pc.add_argument("--email",         metavar="EMAIL",  help="Set email for Let's Encrypt")
     pc.add_argument("--ssh-key",       metavar="PATH",   help="Set path to SSH private key")
     pc.add_argument("--duckdns-token", metavar="TOKEN",  help="Set DuckDNS token for auto DNS update")
+    pc.add_argument("--cors-origin",   metavar="ORIGIN", help="Set CORS origin for Nginx (e.g. https://myapp.netlify.app)")
     pc.add_argument("--rotate-token",  action="store_true", help="Generate a new random token")
 
     # list / sync / status

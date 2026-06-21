@@ -49,6 +49,11 @@ def cmd_config(args):
         save_env(VPS_ENV, {"DUCKDNS_TOKEN": args.duckdns_token})
         print(f"  {green('✓')}  DUCKDNS_TOKEN updated")
         changed = True
+    if args.cors_origin:
+        save_env(VPS_ENV, {"CORS_ORIGIN": args.cors_origin})
+        print(f"  {green('✓')}  CORS_ORIGIN    →  {bold(args.cors_origin)}")
+        print(f"  {dim('→')}  Run 'python porthole.py sync' to apply to Nginx")
+        changed = True
 
     if not changed:
         env      = load_config()
@@ -59,7 +64,8 @@ def cmd_config(args):
         email    = env.get("EMAIL",         dim("not set"))
         key      = env.get("SSH_KEY", str(Path.home() / ".ssh" / "porthole_do"))
         key_ok   = Path(key).expanduser().exists()
-        ddns_tok = env.get("DUCKDNS_TOKEN", "")
+        ddns_tok    = env.get("DUCKDNS_TOKEN", "")
+        cors_origin = env.get("CORS_ORIGIN", "")
         token_d  = (token[:8] + "..." + token[-4:]) if token else dim("not set")
         dash_d   = "*" * 8 if dash else dim("not set")
         ddns_d   = ("*" * 6 + ddns_tok[-4:]) if ddns_tok else dim("not set")
@@ -73,6 +79,7 @@ def cmd_config(args):
         print(f"  {'DUCKDNS_TOKEN':<18}  {ddns_d}")
         print(f"  {'EMAIL':<18}  {email}")
         print(f"  {'SSH_KEY':<18}  {key}  {green('(found)') if key_ok else red('(not found)')}")
+        print(f"  {'CORS_ORIGIN':<18}  {cors_origin or dim('not set')}")
         print(f"  {'MODE':<18}  {mode}")
         print()
         if env.get("DOMAIN"):
@@ -131,11 +138,12 @@ def cmd_remove(args):
 
 def cmd_sync(_args):
     print()
-    env       = load_config()
-    vps_host  = env.get("VPS_HOST",  "")
-    frp_token = env.get("FRP_TOKEN", "")
-    domain    = env.get("DOMAIN",    "")
-    services  = load_services()
+    env         = load_config()
+    vps_host    = env.get("VPS_HOST",    "")
+    frp_token   = env.get("FRP_TOKEN",   "")
+    domain      = env.get("DOMAIN",      "")
+    cors_origin = env.get("CORS_ORIGIN", "")
+    services    = load_services()
 
     FRPC_INI.write_text(gen_frpc_ini(services, vps_host, frp_token), encoding="utf-8")
     print(f"  {green('✓')}  local/frpc.ini")
@@ -148,7 +156,7 @@ def cmd_sync(_args):
         ssh_cmd(vps_host, "cd ~/porthole/vps && docker compose up -d --quiet-pull 2>/dev/null")
         print(f"  {green('✓')}  VPS frps restarted")
         if domain:
-            scp_str(gen_nginx_conf(domain, services), vps_host, "/etc/nginx/sites-available/porthole")
+            scp_str(gen_nginx_conf(domain, services, cors_origin), vps_host, "/etc/nginx/sites-available/porthole")
             ssh_cmd(vps_host, "nginx -t 2>/dev/null && systemctl reload nginx")
             print(f"  {green('✓')}  Nginx config updated")
     else:
@@ -204,11 +212,12 @@ def cmd_status(_args):
     print()
 
 def cmd_secure(args):
-    env      = load_config()
-    vps_host = env.get("VPS_HOST", "")
-    domain   = env.get("DOMAIN",   "")
-    email    = env.get("EMAIL",    "")
-    services = load_services()
+    env         = load_config()
+    vps_host    = env.get("VPS_HOST",    "")
+    domain      = env.get("DOMAIN",      "")
+    email       = env.get("EMAIL",       "")
+    cors_origin = env.get("CORS_ORIGIN", "")
+    services    = load_services()
 
     if args.secure_cmd == "setup":
         if not domain:
@@ -255,7 +264,7 @@ def cmd_secure(args):
             sys.exit(1)
         print(f"  {green('✓')}  SSL certificate issued")
 
-        scp_str(gen_nginx_conf(domain, services), vps_host, "/etc/nginx/sites-available/porthole")
+        scp_str(gen_nginx_conf(domain, services, cors_origin), vps_host, "/etc/nginx/sites-available/porthole")
         ssh_cmd(vps_host, "nginx -t 2>/dev/null && systemctl reload nginx")
         print(f"  {green('✓')}  Nginx SSL config applied")
 

@@ -27,7 +27,14 @@ def gen_vps_compose(services) -> str:
         + "\n".join(ports) + "\n    command: frps -c /etc/frp/frps.ini\n"
     )
 
-def gen_nginx_conf(domain, services) -> str:
+def gen_nginx_conf(domain, services, cors_origin="") -> str:
+    cors = (
+        f"        add_header Access-Control-Allow-Origin \"{cors_origin}\";\n"
+        f"        add_header Access-Control-Allow-Credentials \"true\";\n"
+        f"        add_header Access-Control-Allow-Headers \"Authorization, Content-Type\";\n"
+        f"        add_header Access-Control-Allow-Methods \"GET, POST, OPTIONS\";\n"
+    ) if cors_origin else ""
+
     locations = ""
     for svc in services:
         locations += (
@@ -43,6 +50,7 @@ def gen_nginx_conf(domain, services) -> str:
             f"        proxy_read_timeout 86400s;\n"
             f"        proxy_send_timeout 86400s;\n"
             f"        proxy_buffering off;\n"
+            f"{cors}"
             f"    }}\n"
         )
     return (
