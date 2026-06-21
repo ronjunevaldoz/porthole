@@ -191,6 +191,36 @@ ktor {
 python porthole.py add ktor 8080 8080
 ```
 
+#### WebSocket clients — enable ping/pong keepalives
+
+Home servers sit behind residential ISPs that kill idle TCP connections after 30–60 seconds.
+The nginx proxy on the VPS already sets a 24-hour read timeout, but the ISP NAT layer will
+drop the connection long before that if no data flows. Fix it on the **client** with a ping interval:
+
+```kotlin
+// Ktor WebSocket client
+val client = HttpClient(CIO) {
+    install(WebSockets) {
+        pingInterval = 20_000  // ms — send a ping every 20 s to keep the connection alive
+    }
+}
+```
+
+```kotlin
+// kRPC / custom WebSocket session (server-side, Ktor routing)
+webSocket("/api/rpc") {
+    // The client ping above keeps the tunnel alive.
+    // Optionally mirror it server-side for bidirectional keepalive:
+    for (frame in incoming) {
+        if (frame is Frame.Ping) send(Frame.Pong(frame.data))
+        // ... handle your frames
+    }
+}
+```
+
+> **Rule of thumb:** set `pingInterval` to half the shortest expected NAT timeout — 20 s is safe
+> for most residential ISPs and mobile networks.
+
 ### FastAPI
 ```bash
 uvicorn main:app --host 0.0.0.0 --port 8000
