@@ -5,6 +5,15 @@
     <clipPath id="clip-url2"><rect x="530" y="154" width="190" height="20"/></clipPath>
     <clipPath id="clip-url3"><rect x="530" y="180" width="190" height="20"/></clipPath>
     <clipPath id="clip-main"><rect x="0" y="0" width="820" height="480" rx="10"/></clipPath>
+    <!-- Trash icon symbol: 10x12, draw at (0,0) -->
+    <symbol id="trash" viewBox="0 0 10 12" width="10" height="12">
+      <path d="M3.5 0.5 h3 a.5.5 0 0 1 .5.5v1H3V1a.5.5 0 0 1 .5-.5z" fill="none" stroke="#ef4444" stroke-width="0.9" stroke-linejoin="round"/>
+      <line x1="0" y1="2" x2="10" y2="2" stroke="#ef4444" stroke-width="0.9" stroke-linecap="round"/>
+      <path d="M1.5 2 L2 11 Q2 11.5 2.5 11.5 L7.5 11.5 Q8 11.5 8 11 L8.5 2" fill="none" stroke="#ef4444" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+      <line x1="3.5" y1="4.5" x2="3.5" y2="9.5" stroke="#ef4444" stroke-width="0.8" stroke-linecap="round"/>
+      <line x1="5" y1="4.5" x2="5" y2="9.5" stroke="#ef4444" stroke-width="0.8" stroke-linecap="round"/>
+      <line x1="6.5" y1="4.5" x2="6.5" y2="9.5" stroke="#ef4444" stroke-width="0.8" stroke-linecap="round"/>
+    </symbol>
   </defs>
 
   <!-- Card background -->
@@ -126,15 +135,15 @@
   <circle cx="466" cy="287" r="3" fill="#22c55e" filter="url(#glow)"/>
   <text x="476" y="291" fill="#e2e8f0" font-size="11">ollama</text>
   <text x="600" y="291" fill="#6366f1" font-size="11">.../ollama/</text>
-  <rect x="718" y="281" width="54" height="16" rx="3" fill="#0f1117" stroke="#ef4444" stroke-width="0.8"/>
-  <text x="745" y="292" fill="#ef4444" font-size="10" text-anchor="middle">Remove</text>
+  <rect x="734" y="279" width="22" height="18" rx="3" fill="#0f1117" stroke="#ef4444" stroke-width="0.8"/>
+  <use href="#trash" x="739" y="282"/>
 
   <rect x="456" y="297" width="327" height="1" fill="#2a2d3e"/>
   <circle cx="466" cy="311" r="3" fill="#22c55e" filter="url(#glow)"/>
   <text x="476" y="315" fill="#e2e8f0" font-size="11">ktor</text>
   <text x="600" y="315" fill="#6366f1" font-size="11">.../ktor/</text>
-  <rect x="718" y="305" width="54" height="16" rx="3" fill="#0f1117" stroke="#ef4444" stroke-width="0.8"/>
-  <text x="745" y="316" fill="#ef4444" font-size="10" text-anchor="middle">Remove</text>
+  <rect x="734" y="303" width="22" height="18" rx="3" fill="#0f1117" stroke="#ef4444" stroke-width="0.8"/>
+  <use href="#trash" x="739" y="306"/>
 
   <rect x="456" y="323" width="327" height="1" fill="#2a2d3e"/>
   <text x="456" y="333" fill="#64748b" font-size="10">Local column hidden · buttons wrap · panels stack vertically</text>

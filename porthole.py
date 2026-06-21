@@ -604,7 +604,10 @@ a.url:hover{text-decoration:underline}
   .col-local{display:none}
   .output{height:90px;font-size:11px}
   .bar-right{margin-left:0;order:3;width:100%}
+  .rm-text{display:none}
+  .rm-icon{display:inline}
 }
+.rm-icon{display:none}
 </style>
 </head>
 <body>
@@ -675,7 +678,7 @@ function renderCfg(c){
 function renderSvcs(s,c){
   $('svc-body').innerHTML=s.length?s.map(v=>{
     const url=c.domain?`https://${c.domain}/${v.name}/`:`http://${c.vps_host}:${v.remote_port}`;
-    return `<tr><td><span class="dot idle" id="dot-${v.name}"></span>${v.name}</td><td class="col-local"><span class="chip">${v.local_host||'localhost'}:${v.local_port}</span></td><td><a class="url" href="${url}" target="_blank">${url}</a></td><td class="col-action"><button class="btn sm danger" onclick="doRemove('${v.name}')">Remove</button></td></tr>`;
+    return `<tr><td><span class="dot idle" id="dot-${v.name}"></span>${v.name}</td><td class="col-local"><span class="chip">${v.local_host||'localhost'}:${v.local_port}</span></td><td><a class="url" href="${url}" target="_blank">${url}</a></td><td class="col-action"><button class="btn sm danger" onclick="doRemove('${v.name}')"><span class="rm-text">Remove</span><span class="rm-icon" aria-hidden="true">&#x1F5D1;</span></button></td></tr>`;
   }).join(''):'<tr><td colspan="4" style="color:var(--dim);padding:20px;text-align:center">No services — click + Add</td></tr>';
 }
 
