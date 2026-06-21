@@ -20,6 +20,9 @@ Usage:
   python porthole.py secure setup                  # install Nginx + SSL on VPS
   python porthole.py secure status                 # check HTTPS + cert expiry
   python porthole.py secure renew                  # force cert renewal
+
+  python porthole.py ui                            # open local web dashboard
+  python porthole.py ui --port 8888                # use custom port
 """
 
 import argparse
@@ -530,6 +533,281 @@ def cmd_secure(args):
     else:
         print("  Usage: python porthole.py secure [setup|status|renew]")
 
+# ── UI ────────────────────────────────────────────────────────────────────────
+_UI_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Porthole</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0f1117;--surface:#1a1d27;--border:#2a2d3e;--text:#e2e8f0;--dim:#64748b;--accent:#6366f1;--green:#22c55e;--red:#ef4444;--yellow:#f59e0b}
+body{background:var(--bg);color:var(--text);font-family:'SF Mono','Fira Code',monospace;font-size:13px;height:100vh;display:flex;flex-direction:column}
+header{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 24px;display:flex;align-items:center;gap:12px;flex-shrink:0}
+header h1{font-size:15px;font-weight:600;letter-spacing:.05em}
+.badge{font-size:10px;padding:2px 10px;border-radius:99px;font-weight:600}
+.badge.https{background:#14532d;color:var(--green);border:1px solid var(--green)}
+.badge.http{background:#451a03;color:var(--yellow);border:1px solid var(--yellow)}
+.main{display:grid;grid-template-columns:300px 1fr;flex:1;min-height:0}
+.left{border-right:1px solid var(--border);padding:20px;overflow-y:auto}
+.right{display:flex;flex-direction:column;min-height:0}
+h2{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);margin-bottom:14px}
+.cfg-row{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border)}
+.cfg-row:last-child{border-bottom:none}
+.cfg-label{color:var(--dim)}
+.cfg-val{color:var(--text);font-weight:500;text-align:right;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.svc-bar{padding:14px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
+.svc-wrap{flex:1;overflow-y:auto}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;padding:9px 20px;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg)}
+td{padding:11px 20px;border-bottom:1px solid var(--border)}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--surface)}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:8px;vertical-align:middle}
+.dot.up{background:var(--green);box-shadow:0 0 5px var(--green)}
+.dot.down{background:var(--red)}
+.dot.idle{background:var(--dim)}
+a.url{color:var(--accent);text-decoration:none;font-size:12px}
+a.url:hover{text-decoration:underline}
+.chip{display:inline-block;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 7px;font-size:11px;color:var(--dim)}
+.btn{padding:6px 14px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-family:inherit;font-size:12px;transition:all .15s}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{opacity:.85}
+.btn.danger{border-color:var(--red);color:var(--red)}
+.btn.danger:hover{background:var(--red);color:#fff}
+.btn.sm{padding:3px 10px;font-size:11px}
+.output{padding:12px 20px;font-size:12px;line-height:1.7;overflow-y:auto;white-space:pre-wrap;color:var(--dim);height:140px;flex-shrink:0;border-top:1px solid var(--border)}
+.output .ok{color:var(--green)}
+.output .err{color:var(--red)}
+.bar{padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center;background:var(--surface);flex-shrink:0}
+.bar-right{margin-left:auto;color:var(--dim);font-size:11px}
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:100;align-items:center;justify-content:center}
+.modal-bg.open{display:flex}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;width:340px}
+.modal h3{margin-bottom:16px;font-size:14px}
+.field{margin-bottom:12px}
+.field label{display:block;font-size:11px;color:var(--dim);margin-bottom:4px}
+.field input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-family:inherit;font-size:13px}
+.field input:focus{outline:none;border-color:var(--accent)}
+.modal-bar{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spin{display:inline-block;width:11px;height:11px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite;margin-right:6px;vertical-align:middle}
+</style>
+</head>
+<body>
+<header>
+  <h1>&#x2B21; Porthole</h1>
+  <span class="badge" id="mode-badge">...</span>
+  <span style="margin-left:auto;color:var(--dim);font-size:12px" id="hdr-vps"></span>
+</header>
+<div class="main">
+  <div class="left">
+    <h2>Config</h2>
+    <div id="cfg"></div>
+  </div>
+  <div class="right">
+    <div class="svc-bar">
+      <h2 style="margin:0">Services</h2>
+      <button class="btn sm" onclick="openAdd()">+ Add</button>
+    </div>
+    <div class="svc-wrap">
+      <table>
+        <thead><tr><th>Name</th><th>Local</th><th>URL</th><th></th></tr></thead>
+        <tbody id="svc-body"></tbody>
+      </table>
+    </div>
+    <div class="output" id="out">Ready.</div>
+    <div class="bar">
+      <button class="btn primary" onclick="doSync()">&#x27F3; Sync</button>
+      <button class="btn" onclick="doStatus()">&#x25CE; Status</button>
+      <span class="bar-right" id="last"></span>
+    </div>
+  </div>
+</div>
+<div class="modal-bg" id="modal">
+  <div class="modal">
+    <h3>Add Service</h3>
+    <div class="field"><label>Name</label><input id="m-name" placeholder="myapp"></div>
+    <div class="field"><label>Local Port</label><input id="m-lport" type="number" placeholder="8080"></div>
+    <div class="field"><label>Remote Port</label><input id="m-rport" type="number" placeholder="8080"></div>
+    <div class="modal-bar">
+      <button class="btn" onclick="closeAdd()">Cancel</button>
+      <button class="btn primary" onclick="confirmAdd()">Add &amp; Sync</button>
+    </div>
+  </div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+let _cfg={},_svcs=[];
+
+async function load(){
+  const [c,s]=await Promise.all([fetch('/api/config').then(r=>r.json()),fetch('/api/services').then(r=>r.json())]);
+  _cfg=c;_svcs=s;renderCfg(c);renderSvcs(s,c);
+}
+
+function renderCfg(c){
+  $('mode-badge').textContent=c.domain?'HTTPS':'HTTP';
+  $('mode-badge').className='badge '+(c.domain?'https':'http');
+  $('hdr-vps').textContent=c.vps_host||'no VPS';
+  $('cfg').innerHTML=[
+    ['VPS',c.vps_host||'—'],
+    ['Domain',c.domain||'—'],
+    ['Email',c.email||'—'],
+    ['SSH Key',c.ssh_key_ok?'&#x2713; found':'&#x2717; missing'],
+    ['FRP Token',c.frp_token?'&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;':'—'],
+    ['DuckDNS',c.duckdns_token?'&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;':'—'],
+  ].map(([k,v])=>`<div class="cfg-row"><span class="cfg-label">${k}</span><span class="cfg-val">${v}</span></div>`).join('');
+}
+
+function renderSvcs(s,c){
+  $('svc-body').innerHTML=s.length?s.map(v=>{
+    const url=c.domain?`https://${c.domain}/${v.name}/`:`http://${c.vps_host}:${v.remote_port}`;
+    return `<tr><td><span class="dot idle" id="dot-${v.name}"></span>${v.name}</td><td><span class="chip">${v.local_host||'localhost'}:${v.local_port}</span></td><td><a class="url" href="${url}" target="_blank">${url}</a></td><td><button class="btn sm danger" onclick="doRemove('${v.name}')">Remove</button></td></tr>`;
+  }).join(''):'<tr><td colspan="4" style="color:var(--dim);padding:20px;text-align:center">No services — click + Add</td></tr>';
+}
+
+function setOut(html){$('out').innerHTML=html;$('out').scrollTop=9999;}
+function setLast(t){$('last').textContent=t+' '+new Date().toLocaleTimeString();}
+
+async function doSync(){
+  setOut('<span class="spin"></span>Syncing...');
+  const d=await fetch('/api/sync',{method:'POST'}).then(r=>r.json());
+  setOut(`<span class="${d.ok?'ok':'err'}">${d.output}</span>`);
+  setLast('synced');load();
+}
+
+async function doStatus(){
+  setOut('<span class="spin"></span>Checking...');
+  const d=await fetch('/api/status',{method:'POST'}).then(r=>r.json());
+  setOut(`<span class="ok">${d.output}</span>`);
+  (d.services||[]).forEach(s=>{const el=$(`dot-${s.name}`);if(el)el.className='dot '+(s.up?'up':'down');});
+  setLast('checked');
+}
+
+function openAdd(){$('modal').classList.add('open');}
+function closeAdd(){$('modal').classList.remove('open');}
+
+async function confirmAdd(){
+  const name=$('m-name').value.trim(),lp=$('m-lport').value,rp=$('m-rport').value;
+  if(!name||!lp||!rp)return;
+  closeAdd();
+  setOut(`<span class="spin"></span>Adding ${name}...`);
+  const d=await fetch('/api/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,local_port:+lp,remote_port:+rp})}).then(r=>r.json());
+  setOut(`<span class="${d.ok?'ok':'err'}">${d.output}</span>`);
+  load();
+}
+
+async function doRemove(name){
+  if(!confirm(`Remove "${name}"?`))return;
+  setOut(`<span class="spin"></span>Removing ${name}...`);
+  const d=await fetch('/api/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}).then(r=>r.json());
+  setOut(`<span class="${d.ok?'ok':'err'}">${d.output}</span>`);
+  load();
+}
+
+load();
+setInterval(load,30000);
+</script>
+</body>
+</html>"""
+
+def cmd_ui(args):
+    import contextlib, http.server, io, json, re, threading, types, webbrowser
+
+    ui_port = getattr(args, "port", 7502)
+
+    def _capture(fn, fn_args):
+        buf = io.StringIO()
+        ok  = True
+        try:
+            with contextlib.redirect_stdout(buf):
+                fn(fn_args)
+        except SystemExit as e:
+            ok = e.code == 0
+        except Exception as e:
+            buf.write(str(e))
+            ok = False
+        out = re.sub(r"\033\[[0-9;]*m", "", buf.getvalue()).strip()
+        return out, ok
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path in ("/", "/index.html"):
+                body = _UI_HTML.encode()
+                self._send(200, "text/html", body)
+            elif self.path == "/api/config":
+                env = {**load_env(LOCAL_ENV), **load_env(VPS_ENV)}
+                key = Path(env.get("SSH_KEY", str(Path.home() / ".ssh" / "porthole_do"))).expanduser()
+                self._json({
+                    "vps_host":      env.get("VPS_HOST", ""),
+                    "domain":        env.get("DOMAIN", ""),
+                    "email":         env.get("EMAIL", ""),
+                    "frp_token":     bool(env.get("FRP_TOKEN")),
+                    "duckdns_token": bool(env.get("DUCKDNS_TOKEN")),
+                    "ssh_key_ok":    key.exists(),
+                })
+            elif self.path == "/api/services":
+                self._json([{"name": s.name, "local_port": s.local_port,
+                              "remote_port": s.remote_port, "local_host": s.local_host}
+                             for s in load_services()])
+            else:
+                self._send(404, "text/plain", b"not found")
+
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", 0))
+            body   = json.loads(self.rfile.read(length)) if length else {}
+
+            if self.path == "/api/sync":
+                out, ok = _capture(cmd_sync, None)
+                self._json({"ok": ok, "output": out})
+
+            elif self.path == "/api/status":
+                env  = {**load_env(LOCAL_ENV), **load_env(VPS_ENV)}
+                vps  = env.get("VPS_HOST", "")
+                svcs = load_services()
+                rows = [{"name": s.name, "up": port_open(vps, s.remote_port)} for s in svcs]
+                lines = "\n".join(f"{'✓' if r['up'] else '✗'}  {r['name']}" for r in rows)
+                self._json({"ok": True, "output": lines or "No services.", "services": rows})
+
+            elif self.path == "/api/add":
+                a   = types.SimpleNamespace(name=body["name"], local_port=body["local_port"],
+                                            remote_port=body["remote_port"], docker=None, no_sync=False)
+                out, ok = _capture(cmd_add, a)
+                self._json({"ok": ok, "output": out})
+
+            elif self.path == "/api/remove":
+                a   = types.SimpleNamespace(name=body["name"], no_sync=False)
+                out, ok = _capture(cmd_remove, a)
+                self._json({"ok": ok, "output": out})
+
+            else:
+                self._send(404, "text/plain", b"not found")
+
+        def _send(self, code, ctype, body):
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", len(body))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _json(self, data):
+            self._send(200, "application/json", json.dumps(data).encode())
+
+        def log_message(self, *_):
+            pass
+
+    server = http.server.HTTPServer(("localhost", ui_port), Handler)
+    url    = f"http://localhost:{ui_port}"
+    print(f"\n  {green('✓')}  Porthole UI  →  {bold(url)}")
+    print(f"  {dim('Press Ctrl+C to stop.')}\n")
+    threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print(f"\n  {dim('UI stopped.')}")
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 def main():
     p = argparse.ArgumentParser(
@@ -581,11 +859,16 @@ def main():
     ps.add_argument("secure_cmd", choices=["setup", "status", "renew"],
                     metavar="[setup|status|renew]")
 
+    # ui
+    pu = sub.add_parser("ui", help="Open local web dashboard")
+    pu.add_argument("--port", type=int, default=7502, metavar="PORT",
+                    help="Local port for the UI server (default: 7502)")
+
     args = p.parse_args()
     dispatch = {
         "config": cmd_config, "list": cmd_list,   "add":    cmd_add,
         "remove": cmd_remove, "sync": cmd_sync,   "status": cmd_status,
-        "secure": cmd_secure,
+        "secure": cmd_secure, "ui":   cmd_ui,
     }
     fn = dispatch.get(args.cmd)
     fn(args) if fn else p.print_help()
