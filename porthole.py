@@ -148,7 +148,8 @@ def gen_nginx_conf(domain, services) -> str:
             f"        proxy_http_version 1.1;\n"
             f"        proxy_set_header Upgrade $http_upgrade;\n"
             f"        proxy_set_header Connection \"upgrade\";\n"
-            f"        proxy_read_timeout 300s;\n"
+            f"        proxy_read_timeout 86400s;\n"
+            f"        proxy_send_timeout 86400s;\n"
             f"        proxy_buffering off;\n"
             f"    }}\n"
         )
